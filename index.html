@@ -1,0 +1,1415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Custom Project Management Platform</title>
+    <!-- Tailwind CSS CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        // Corrected import: added missing Firestore functions
+        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, orderBy, serverTimestamp, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase configuration and initialization
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        // Store these globally or pass them down via context/props in React
+        window.firebaseApp = app;
+        window.firestoreDb = db;
+        window.firebaseAuth = auth;
+        window.appId = appId;
+        window.serverTimestamp = serverTimestamp; // Expose for use in React components
+        // Expose all necessary Firestore functions to the window object for React components
+        window.firestoreCollection = collection;
+        window.firestoreDoc = doc;
+        window.firestoreGetDoc = getDoc;
+        window.firestoreAddDoc = addDoc;
+        window.firestoreSetDoc = setDoc;
+        window.firestoreUpdateDoc = updateDoc;
+        window.firestoreDeleteDoc = deleteDoc;
+        window.firestoreOnSnapshot = onSnapshot;
+        window.firestoreQuery = query;
+        window.firestoreWhere = where;
+        window.firestoreOrderBy = orderBy;
+        window.firestoreGetDocs = getDocs;
+
+
+        // Attempt to sign in
+        onAuthStateChanged(auth, async (user) => {
+            if (!user) {
+                try {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                        console.log("Signed in with custom token!");
+                    } else {
+                        await signInAnonymously(auth);
+                        console.log("Signed in anonymously!");
+                    }
+                } catch (error) {
+                    console.error("Error signing in:", error);
+                }
+            } else {
+                console.log("User already signed in:", user.uid);
+            }
+        });
+    </script>
+    <!-- React and ReactDOM CDNs -->
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <!-- Babel for JSX transformation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-gray-100 font-sans antialiased">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useContext, createContext, useRef } = React; // Added useRef
+        const {
+            firestoreDb,
+            firebaseAuth,
+            appId,
+            serverTimestamp,
+            // Destructure all newly exposed Firestore functions
+            firestoreCollection,
+            firestoreDoc,
+            firestoreGetDoc,
+            firestoreAddDoc,
+            firestoreSetDoc,
+            firestoreUpdateDoc,
+            firestoreDeleteDoc,
+            firestoreOnSnapshot,
+            firestoreQuery,
+            firestoreWhere,
+            firestoreOrderBy,
+            firestoreGetDocs,
+        } = window; // Access global Firebase instances
+
+        // --- Context for Firebase and User ---
+        const FirebaseContext = createContext(null);
+
+        // --- Utility Functions ---
+        const formatFirestoreTimestamp = (timestamp) => {
+            if (!timestamp) return 'N/A';
+            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+            return date.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+            });
+        };
+
+        const calculateDaysDiff = (date1, date2) => {
+            if (!date1 || !date2) return 'N/A';
+            const d1 = date1.toDate ? date1.toDate() : new Date(date1);
+            const d2 = date2.toDate ? date2.toDate() : new Date(date2);
+            const diffTime = Math.abs(d2 - d1);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            return diffDays;
+        };
+
+        // Admin User ID (for demo purposes)
+        // In a real app, this would be managed via user profiles in Firestore or Firebase Auth custom claims.
+        // For testing, setting this to the logged-in user's UID or simply checking `user !== null` makes it functional.
+        // Replace 'your_specific_admin_uid_here' with the actual UID of your admin user.
+        const ADMIN_USER_ID = 'your_specific_admin_uid_here'; // <-- IMPORTANT: Replace this with your admin's UID
+
+        // --- Main App Component ---
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [authReady, setAuthReady] = useState(false);
+            const [currentPage, setCurrentPage] = useState('dashboard'); // 'dashboard', 'projectDetail', 'jobDetail'
+            const [selectedProject, setSelectedProject] = useState(null);
+            const [selectedCategory, setSelectedCategory] = useState(null);
+            const [selectedJob, setSelectedJob] = useState(null);
+
+            useEffect(() => {
+                if (!firebaseAuth) return;
+
+                const unsubscribe = firebaseAuth.onAuthStateChanged((currentUser) => {
+                    setUser(currentUser);
+                    setAuthReady(true);
+                    console.log("Auth state changed. User:", currentUser?.uid);
+                });
+
+                return () => unsubscribe();
+            }, []);
+
+            if (!authReady) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+                        <div className="flex items-center text-xl text-gray-700">
+                            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Loading authentication...
+                        </div>
+                    </div>
+                );
+            }
+
+            // Simple admin check for demo purposes
+            // This will make any authenticated user an "admin" for testing.
+            // For production, you'd define specific admin UIDs or roles in Firestore.
+            const isAdmin = user !== null;
+
+
+            const navigateToDashboard = () => {
+                setCurrentPage('dashboard');
+                setSelectedProject(null);
+                setSelectedCategory(null);
+                setSelectedJob(null);
+            };
+
+            const navigateToProjectDetail = (project) => {
+                setSelectedProject(project);
+                setCurrentPage('projectDetail');
+                setSelectedCategory(null);
+                setSelectedJob(null);
+            };
+
+            const navigateToCategoryJobs = (category) => {
+                setSelectedCategory(category);
+                setCurrentPage('categoryJobs');
+                setSelectedJob(null);
+            };
+
+            const navigateToJobDetail = (job) => {
+                setSelectedJob(job);
+                setCurrentPage('jobDetail');
+            };
+
+
+            let content;
+            switch (currentPage) {
+                case 'projectDetail':
+                    content = <ProjectDetailView
+                                project={selectedProject}
+                                onBack={navigateToDashboard}
+                                onCategorySelect={navigateToCategoryJobs}
+                                isAdmin={isAdmin}
+                                userId={user?.uid}
+                                userName={user?.email || user?.uid}
+                                authReady={authReady} // Pass authReady to child components
+                                currentUser={user} // Pass current user object
+                              />;
+                    break;
+                case 'categoryJobs':
+                    content = <CategoryJobsView
+                                project={selectedProject}
+                                category={selectedCategory}
+                                onBack={() => navigateToProjectDetail(selectedProject)}
+                                onJobSelect={navigateToJobDetail}
+                                isAdmin={isAdmin}
+                                userId={user?.uid}
+                                userName={user?.email || user?.uid}
+                                authReady={authReady} // Pass authReady to child components
+                                currentUser={user} // Pass current user object
+                            />;
+                    break;
+                case 'jobDetail':
+                    content = <JobDetailView
+                                project={selectedProject}
+                                category={selectedCategory}
+                                job={selectedJob}
+                                onBack={() => navigateToCategoryJobs(selectedCategory)}
+                                isAdmin={isAdmin}
+                                userId={user?.uid}
+                                userName={user?.email || user?.uid}
+                                authReady={authReady} // Pass authReady to child components
+                                currentUser={user} // Pass current user object
+                            />;
+                    break;
+                case 'dashboard':
+                default:
+                    content = <DashboardView
+                                onProjectSelect={navigateToProjectDetail}
+                                isAdmin={isAdmin}
+                                userId={user?.uid}
+                                userName={user?.email || user?.uid}
+                                authReady={authReady} // Pass authReady to child components
+                                currentUser={user} // Pass current user object
+                              />;
+                    break;
+            }
+
+            return (
+                <FirebaseContext.Provider value={{ db: firestoreDb, auth: firebaseAuth, appId, user, isAdmin, serverTimestamp }}>
+                    <div className="min-h-screen bg-gray-100">
+                        {/* Header for navigation and user info */}
+                        <header className="bg-white shadow-sm p-4 flex items-center justify-between">
+                            <h1 className="text-xl font-bold text-gray-800">Project Platform</h1>
+                            {user && (
+                                <div className="text-sm text-gray-600">
+                                    Logged in as: <span className="font-semibold">{user.email || user.uid}</span>
+                                    {isAdmin && <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs">Admin</span>}
+                                </div>
+                            )}
+                        </header>
+                        {content}
+                    </div>
+                </FirebaseContext.Provider>
+            );
+        };
+
+        // --- Dashboard View Component ---
+        const DashboardView = ({ onProjectSelect, isAdmin, userId, userName, authReady, currentUser }) => {
+            const { db, appId } = useContext(FirebaseContext);
+            const [projects, setProjects] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [filterStatus, setFilterStatus] = useState('All');
+            const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
+
+            useEffect(() => {
+                // Ensure authentication is ready and Firestore DB instance is available
+                if (!authReady || !currentUser || !db || !appId) {
+                    console.log("DashboardView: Not ready to fetch projects. authReady:", authReady, "currentUser:", currentUser, "db:", db, "appId:", appId);
+                    setLoading(true); // Keep loading state true until ready
+                    return;
+                }
+
+                console.log("DashboardView: Fetching projects...");
+                const projectsRef = firestoreCollection(db, `artifacts/${appId}/public/data/projects`);
+                const q = firestoreQuery(projectsRef);
+
+                const unsubscribe = firestoreOnSnapshot(q, (snapshot) => {
+                    const projectsData = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+                    setProjects(projectsData);
+                    setLoading(false);
+                    console.log("Projects loaded:", projectsData);
+                }, (error) => {
+                    console.error("Error fetching projects:", error);
+                    setLoading(false);
+                });
+
+                return () => unsubscribe();
+            }, [db, appId, authReady, currentUser]); // Added authReady and currentUser to dependencies
+
+            const filteredProjects = projects.filter(project => {
+                const matchesSearch = searchTerm === '' ||
+                                      project["projectName"].toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                      project["projectAdmin"].toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                      project["projectCode"].toLowerCase().includes(searchTerm.toLowerCase());
+                const matchesStatus = filterStatus === 'All' || project.status === filterStatus;
+                return matchesSearch && matchesStatus;
+            });
+
+            if (loading) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+                        <div className="flex items-center text-xl text-gray-700">
+                            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Loading projects...
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="container mx-auto p-4 md:p-8">
+                    <div className="flex justify-between items-center mb-8">
+                        <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900">Projects Overview</h2>
+                        {isAdmin && (
+                            <button
+                                onClick={() => setShowCreateProjectModal(true)}
+                                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow transition duration-300 ease-in-out transform hover:scale-105"
+                            >
+                                Create New Project
+                            </button>
+                        )}
+                    </div>
+
+                    <div className="mb-6 flex flex-col md:flex-row justify-between items-center gap-4">
+                        <input
+                            type="text"
+                            placeholder="Search by project name, admin, or code..."
+                            className="p-3 border border-gray-300 rounded-lg w-full md:flex-grow focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                        <select
+                            className="p-3 border border-gray-300 rounded-lg bg-white w-full md:w-auto focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={filterStatus}
+                            onChange={(e) => setFilterStatus(e.target.value)}
+                        >
+                            <option value="All">All Statuses</option>
+                            <option value="Active">Active</option>
+                            <option value="On Hold">On Hold</option>
+                            <option value="Completed">Completed</option>
+                            <option value="Planning">Planning</option>
+                            <option value="Archived">Archived</option>
+                        </select>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {filteredProjects.length > 0 ? (
+                            filteredProjects.map((project) => (
+                                <ProjectCard key={project.id} project={project} onSelect={onProjectSelect} />
+                            ))
+                        ) : (
+                            <p className="text-center text-gray-600 text-lg col-span-full py-10">No projects found matching your criteria.</p>
+                        )}
+                    </div>
+
+                    {showCreateProjectModal && (
+                        <CreateProjectModal
+                            onClose={() => setShowCreateProjectModal(false)}
+                            userId={userId}
+                            userName={userName}
+                        />
+                    )}
+                </div>
+            );
+        };
+
+        // --- Project Card Component ---
+        const ProjectCard = ({ project, onSelect }) => {
+            const now = new Date();
+            const deadlineDate = project.deadline ? (project.deadline.toDate ? project.deadline.toDate() : new Date(project.deadline)) : null;
+            const lastStatusUpdateDate = project.lastStatusUpdate ? (project.lastStatusUpdate.toDate ? project.lastStatusUpdate.toDate() : new Date(project.lastStatusUpdate)) : null;
+
+            let daysDueText = 'N/A';
+            let deadlineColorClass = 'text-gray-600';
+            if (deadlineDate) {
+                const diffTime = deadlineDate.getTime() - now.getTime();
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                if (diffDays > 0) {
+                    daysDueText = `${diffDays} days left`;
+                    if (diffDays <= 7) deadlineColorClass = 'text-orange-600';
+                } else if (diffDays < 0) {
+                    daysDueText = `${Math.abs(diffDays)} days overdue`;
+                    deadlineColorClass = 'text-red-600 font-bold';
+                } else {
+                    daysDueText = 'Due today';
+                    deadlineColorClass = 'text-orange-600 font-bold';
+                }
+            }
+
+            let daysSinceUpdateText = 'N/A';
+            if (lastStatusUpdateDate) {
+                const diffDays = calculateDaysDiff(lastStatusUpdateDate, now);
+                daysSinceUpdateText = `${diffDays} days ago`;
+                if (diffDays > 30) daysSinceUpdateText = `${diffDays} days ago (stale)`; // Highlight stale updates
+            }
+
+            let statusColorClass = '';
+            let progressColorClass = '';
+
+            switch (project.status) {
+                case 'Active':
+                    statusColorClass = 'bg-blue-200 text-blue-800';
+                    break;
+                case 'On Hold':
+                    statusColorClass = 'bg-yellow-200 text-yellow-800';
+                    break;
+                case 'Completed':
+                    statusColorClass = 'bg-green-200 text-green-800';
+                    break;
+                case 'Planning':
+                    statusColorClass = 'bg-purple-200 text-purple-800';
+                    break;
+                case 'Archived':
+                    statusColorClass = 'bg-gray-300 text-gray-700';
+                    break;
+                default:
+                    statusColorClass = 'bg-gray-200 text-gray-800';
+            }
+
+            if (project.progress < 25) {
+                progressColorClass = 'bg-red-500';
+            } else if (project.progress < 75) {
+                progressColorClass = 'bg-yellow-500';
+            } else {
+                progressColorClass = 'bg-green-500';
+            }
+
+            return (
+                <div
+                    className="bg-white rounded-lg shadow-md p-6 mb-4 transform transition duration-300 hover:scale-105 cursor-pointer flex flex-col justify-between"
+                    onClick={() => onSelect(project)}
+                >
+                    <div>
+                        <div className="flex justify-between items-start mb-3">
+                            <h3 className="text-xl font-bold text-gray-800">{project.projectName}</h3>
+                            <span className={`px-3 py-1 rounded-full text-sm font-semibold ${statusColorClass}`}>
+                                {project.status}
+                            </span>
+                        </div>
+                        <div className="text-gray-600 mb-1">
+                            <span className="font-semibold">Code:</span> {project.projectCode}
+                        </div>
+                        <div className="text-gray-600 mb-1">
+                            <span className="font-semibold">Admin:</span> {project.projectAdmin}
+                        </div>
+                        <div className="text-gray-600 text-sm mb-1">
+                            <span className="font-semibold">Deadline:</span> {formatFirestoreTimestamp(project.deadline)} (<span className={deadlineColorClass}>{daysDueText}</span>)
+                        </div>
+                        <div className="text-gray-600 text-sm mb-4">
+                            <span className="font-semibold">Last Update:</span> {daysSinceUpdateText}
+                        </div>
+
+                        <div className="mt-4">
+                            <div className="flex justify-between text-sm font-medium text-gray-700 mb-1">
+                                <span>Progress</span>
+                                <span>{project.progress || 0}%</span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2.5">
+                                <div
+                                    className={`${progressColorClass} h-2.5 rounded-full`}
+                                    style={{ width: `${project.progress || 0}%` }}
+                                ></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="mt-4 flex justify-between text-sm text-gray-500">
+                        <div>Open Jobs: <span className="font-semibold">{project.openJobsCount || 0}</span></div>
+                        <div>Closed Jobs: <span className="font-semibold">{project.closedJobsCount || 0}</span></div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Create Project Modal Component ---
+        const CreateProjectModal = ({ onClose, userId, userName }) => {
+            const { db, appId, serverTimestamp } = useContext(FirebaseContext);
+            const [projectName, setProjectName] = useState('');
+            const [projectCode, setProjectCode] = useState('');
+            const [projectAdmin, setProjectAdmin] = useState(userName || '');
+            const [deadline, setDeadline] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const mounted = useRef(true); // Ref to track if the component is mounted
+
+            // Set mounted.current to false when component unmounts
+            useEffect(() => {
+                return () => {
+                    mounted.current = false;
+                };
+            }, []);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (!projectName || !projectCode || !projectAdmin || !deadline) {
+                    setError("All fields are required.");
+                    return;
+                }
+                setLoading(true);
+                setError('');
+
+                try {
+                    await firestoreAddDoc(firestoreCollection(db, `artifacts/${appId}/public/data/projects`), {
+                        projectName,
+                        projectCode,
+                        projectAdmin,
+                        status: "Planning",
+                        progress: 0,
+                        deadline: new Date(deadline),
+                        lastStatusUpdate: serverTimestamp(),
+                        openJobsCount: 0,
+                        closedJobsCount: 0,
+                        createdAt: serverTimestamp(),
+                        createdBy: userId
+                    });
+                    if (mounted.current) { // Only call onClose if component is still mounted
+                        onClose();
+                    }
+                } catch (err) {
+                    console.error("Error creating project:", err);
+                    if (mounted.current) { // Only update error state if component is still mounted
+                        setError("Failed to create project. Please try again.");
+                    }
+                } finally {
+                    if (mounted.current) { // Only update loading state if component is still mounted
+                        setLoading(false);
+                    }
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                        <h3 className="text-2xl font-bold text-gray-900 mb-6 text-center">Create New Project</h3>
+                        <form onSubmit={handleSubmit}>
+                            <div className="mb-4">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="projectName">
+                                    Project Name
+                                </label>
+                                <input
+                                    type="text"
+                                    id="projectName"
+                                    className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline focus:ring-2 focus:ring-blue-500"
+                                    value={projectName}
+                                    onChange={(e) => setProjectName(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            <div className="mb-4">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="projectCode">
+                                    Project Code
+                                </label>
+                                <input
+                                    type="text"
+                                    id="projectCode"
+                                    className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline focus:ring-2 focus:ring-blue-500"
+                                    value={projectCode}
+                                    onChange={(e) => setProjectCode(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            <div className="mb-4">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="projectAdmin">
+                                    Project Admin
+                                </label>
+                                <input
+                                    type="text"
+                                    id="projectAdmin"
+                                    className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline focus:ring-2 focus:ring-blue-500"
+                                    value={projectAdmin}
+                                    onChange={(e) => setProjectAdmin(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            <div className="mb-6">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="deadline">
+                                    Deadline
+                                </label>
+                                <input
+                                    type="date"
+                                    id="deadline"
+                                    className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline focus:ring-2 focus:ring-blue-500"
+                                    value={deadline}
+                                    onChange={(e) => setDeadline(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            {error && <p className="text-red-500 text-xs italic mb-4 text-center">{error}</p>}
+                            <div className="flex items-center justify-between">
+                                <button
+                                    type="submit"
+                                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-300 ease-in-out transform hover:scale-105 disabled:opacity-50"
+                                    disabled={loading}
+                                >
+                                    {loading ? 'Creating...' : 'Create Project'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={onClose}
+                                    className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-300 ease-in-out transform hover:scale-105"
+                                    disabled={loading}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+
+        // --- Project Detail View Component ---
+        const ProjectDetailView = ({ project, onBack, onCategorySelect, isAdmin, userId, userName, authReady, currentUser }) => {
+            const { db, appId, serverTimestamp } = useContext(FirebaseContext);
+            const [categories, setCategories] = useState([]);
+            const [loadingCategories, setLoadingCategories] = useState(true);
+            const [showCreateCategoryModal, setShowCreateCategoryModal] = useState(false);
+
+            useEffect(() => {
+                if (!authReady || !currentUser || !db || !appId || !project?.id) {
+                    console.log("ProjectDetailView: Not ready to fetch categories. authReady:", authReady, "currentUser:", currentUser, "db:", db, "appId:", appId, "projectId:", project?.id);
+                    setLoadingCategories(true);
+                    return;
+                }
+
+                console.log("ProjectDetailView: Fetching categories for project:", project.id);
+                const categoriesRef = firestoreCollection(db, `artifacts/${appId}/public/data/projects/${project.id}/categories`);
+                const q = firestoreQuery(categoriesRef);
+
+                const unsubscribe = firestoreOnSnapshot(q, (snapshot) => {
+                    const categoriesData = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+                    setCategories(categoriesData);
+                    setLoadingCategories(false);
+                    console.log(`Categories for project ${project.projectName} loaded:`, categoriesData);
+                }, (error) => {
+                    console.error(`Error fetching categories for project ${project.projectName}:`, error);
+                    setLoadingCategories(false);
+                });
+
+                return () => unsubscribe();
+            }, [db, appId, project?.id, authReady, currentUser]); // Added authReady and currentUser to dependencies
+
+            const predefinedCategories = ["Agency", "Printing", "Studios", "Events", "Consulting"];
+
+            if (loadingCategories) {
+                return (
+                    <div className="flex items-center justify-center min-h-screen">
+                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Loading categories...
+                    </div>
+                );
+            }
+
+            return (
+                <div className="container mx-auto p-4 md:p-8">
+                    <button
+                        onClick={onBack}
+                        className="mb-6 flex items-center text-blue-600 hover:text-blue-800 font-semibold transition duration-200"
+                    >
+                        <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
+                        Back to Dashboard
+                    </button>
+
+                    <h2 className="text-3xl font-extrabold text-gray-900 mb-6">{project.projectName} Details</h2>
+
+                    <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-gray-700">
+                            <p><span className="font-semibold">Project Code:</span> {project.projectCode}</p>
+                            <p><span className="font-semibold">Admin:</span> {project.projectAdmin}</p>
+                            <p><span className="font-semibold">Status:</span> {project.status}</p>
+                            <p><span className="font-semibold">Progress:</span> {project.progress}%</p>
+                            <p><span className="font-semibold">Deadline:</span> {formatFirestoreTimestamp(project.deadline)}</p>
+                            <p><span className="font-semibold">Open Jobs:</span> {project.openJobsCount || 0}</p>
+                            <p><span className="font-semibold">Closed Jobs:</span> {project.closedJobsCount || 0}</p>
+                            <p><span className="font-semibold">Last Update:</span> {formatFirestoreTimestamp(project.lastStatusUpdate)}</p>
+                        </div>
+                    </div>
+
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="text-2xl font-bold text-gray-900">Job Categories</h3>
+                        {isAdmin && (
+                            <button
+                                onClick={() => setShowCreateCategoryModal(true)}
+                                className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow transition duration-300 ease-in-out transform hover:scale-105"
+                            >
+                                Add Category
+                            </button>
+                        )}
+                    </div>
+
+                    {predefinedCategories.length > 0 ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {predefinedCategories.map(catName => {
+                                const category = categories.find(c => c.name === catName);
+                                return (
+                                    <div
+                                        key={catName}
+                                        className="bg-blue-50 border border-blue-200 rounded-lg p-5 cursor-pointer hover:shadow-lg transition duration-200"
+                                        onClick={() => onCategorySelect({ id: category?.id || catName, name: catName })} // Pass category object
+                                    >
+                                        <h4 className="text-lg font-semibold text-blue-800">{catName}</h4>
+                                        <p className="text-sm text-gray-600 mt-2">{category?.description || 'No description available.'}</p>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <p className="text-center text-gray-600 text-lg py-10">No categories defined for this project.</p>
+                    )}
+
+                    {showCreateCategoryModal && (
+                        <CreateCategoryModal
+                            onClose={() => setShowCreateCategoryModal(false)}
+                            projectId={project.id}
+                            existingCategories={categories.map(c => c.name)}
+                            userId={userId}
+                            userName={userName}
+                        />
+                    )}
+                </div>
+            );
+        };
+
+        // --- Create Category Modal Component ---
+        const CreateCategoryModal = ({ onClose, projectId, existingCategories, userId, userName }) => {
+            const { db, appId, serverTimestamp } = useContext(FirebaseContext);
+            const [categoryName, setCategoryName] = useState('');
+            const [description, setDescription] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const mounted = useRef(true); // Ref to track if the component is mounted
+
+            // Set mounted.current to false when component unmounts
+            useEffect(() => {
+                return () => {
+                    mounted.current = false;
+                };
+            }, []);
+
+            const predefinedCategoryOptions = ["Agency", "Printing", "Studios", "Events", "Consulting"].filter(
+                cat => !existingCategories.includes(cat)
+            );
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (!categoryName) {
+                    setError("Category Name is required.");
+                    return;
+                }
+                if (existingCategories.includes(categoryName)) {
+                    setError("This category already exists for this project.");
+                    return;
+                }
+
+                setLoading(true);
+                setError('');
+
+                try {
+                    // Use the exposed firestoreSetDoc and firestoreDoc functions
+                    await firestoreSetDoc(firestoreDoc(db, `artifacts/${appId}/public/data/projects/${projectId}/categories`, categoryName), { // Use categoryName as doc ID
+                        name: categoryName,
+                        description,
+                        createdAt: serverTimestamp(),
+                        createdBy: userId
+                    });
+                    if (mounted.current) {
+                        onClose();
+                    }
+                } catch (err) {
+                    console.error("Error creating category:", err);
+                    if (mounted.current) {
+                        setError("Failed to create category. Please try again.");
+                    }
+                } finally {
+                    if (mounted.current) {
+                        setLoading(false);
+                    }
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                        <h3 className="text-2xl font-bold text-gray-900 mb-6 text-center">Add New Category</h3>
+                        <form onSubmit={handleSubmit}>
+                            <div className="mb-4">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="categoryName">
+                                    Category Name
+                                </label>
+                                <select
+                                    id="categoryName"
+                                    className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline focus:ring-2 focus:ring-blue-500"
+                                    value={categoryName}
+                                    onChange={(e) => setCategoryName(e.target.value)}
+                                    required
+                                >
+                                    <option value="">Select a category</option>
+                                    {predefinedCategoryOptions.map(cat => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="mb-4">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="description">
+                                    Description (Optional)
+                                </label>
+                                <textarea
+                                    id="description"
+                                    rows="3"
+                                    className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline focus:ring-2 focus:ring-blue-500"
+                                    value={description}
+                                    onChange={(e) => setDescription(e.target.value)}
+                                ></textarea>
+                            </div>
+                            {error && <p className="text-red-500 text-xs italic mb-4 text-center">{error}</p>}
+                            <div className="flex items-center justify-between">
+                                <button
+                                    type="submit"
+                                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-300 ease-in-out transform hover:scale-105 disabled:opacity-50"
+                                    disabled={loading}
+                                >
+                                    {loading ? 'Adding...' : 'Add Category'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={onClose}
+                                    className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-300 ease-in-out transform hover:scale-105"
+                                    disabled={loading}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+
+        // --- Category Jobs View Component ---
+        const CategoryJobsView = ({ project, category, onBack, onJobSelect, isAdmin, userId, userName, authReady, currentUser }) => {
+            const { db, appId, serverTimestamp } = useContext(FirebaseContext);
+            const [jobs, setJobs] = useState([]);
+            const [loadingJobs, setLoadingJobs] = useState(true);
+            const [showCreateJobModal, setShowCreateJobModal] = useState(false);
+
+            useEffect(() => {
+                if (!authReady || !currentUser || !db || !appId || !project?.id || !category?.id) {
+                    console.log("CategoryJobsView: Not ready to fetch jobs. authReady:", authReady, "currentUser:", currentUser, "db:", db, "appId:", appId, "projectId:", project?.id, "categoryId:", category?.id);
+                    setLoadingJobs(true);
+                    return;
+                }
+
+                console.log("CategoryJobsView: Fetching jobs for category:", category.name);
+                const jobsRef = firestoreCollection(db, `artifacts/${appId}/public/data/projects/${project.id}/categories/${category.id}/jobs`);
+                const q = firestoreQuery(jobsRef); // No orderBy here to avoid index requirements
+
+                const unsubscribe = firestoreOnSnapshot(q, (snapshot) => {
+                    const jobsData = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+                    // Sort in memory if needed
+                    jobsData.sort((a, b) => (a.createdAt?.toDate() || 0) - (b.createdAt?.toDate() || 0));
+                    setJobs(jobsData);
+                    setLoadingJobs(false);
+                    console.log(`Jobs for category ${category.name} loaded:`, jobsData);
+                }, (error) => {
+                    console.error(`Error fetching jobs for category ${category.name}:`, error);
+                    setLoadingJobs(false);
+                });
+
+                return () => unsubscribe();
+            }, [db, appId, project?.id, category?.id, authReady, currentUser]); // Added authReady and currentUser to dependencies
+
+            // Function to update project's job counts
+            const updateProjectJobCounts = async () => {
+                if (!db || !appId || !project?.id || !currentUser) return; // Ensure currentUser is available
+                const projectRef = firestoreDoc(db, `artifacts/${appId}/public/data/projects/${project.id}`);
+
+                try {
+                    let totalOpenJobs = 0;
+                    let totalClosedJobs = 0;
+
+                    const categoriesSnapshot = await firestoreGetDocs(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${project.id}/categories`));
+                    for (const catDoc of categoriesSnapshot.docs) {
+                        const jobsSnapshot = await firestoreGetDocs(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${project.id}/categories/${catDoc.id}/jobs`));
+                        jobsSnapshot.forEach(jobDoc => {
+                            const job = jobDoc.data();
+                            if (job.status === 'Done' || job.status === 'Archived') {
+                                totalClosedJobs++;
+                            } else {
+                                totalOpenJobs++;
+                            }
+                        });
+                    }
+
+                    await firestoreUpdateDoc(projectRef, {
+                        openJobsCount: totalOpenJobs,
+                        closedJobsCount: totalClosedJobs,
+                        lastStatusUpdate: serverTimestamp()
+                    });
+                    console.log(`Project ${project.projectName} job counts updated.`);
+                } catch (error) {
+                    console.error("Error updating project job counts:", error);
+                }
+            };
+
+            useEffect(() => {
+                if (!loadingJobs && authReady && currentUser) { // Only update if auth is ready and jobs are loaded
+                    updateProjectJobCounts();
+                }
+            }, [jobs, loadingJobs, authReady, currentUser]); // Added authReady and currentUser to dependencies
+
+            if (loadingJobs) {
+                return (
+                    <div className="flex items-center justify-center min-h-screen">
+                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Loading jobs...
+                    </div>
+                );
+            }
+
+            return (
+                <div className="container mx-auto p-4 md:p-8">
+                    <button
+                        onClick={onBack}
+                        className="mb-6 flex items-center text-blue-600 hover:text-blue-800 font-semibold transition duration-200"
+                    >
+                        <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
+                        Back to {project.projectName}
+                    </button>
+
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-3xl font-extrabold text-gray-900">{category.name} Jobs</h2>
+                        {isAdmin && (
+                            <button
+                                onClick={() => setShowCreateJobModal(true)}
+                                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow transition duration-300 ease-in-out transform hover:scale-105"
+                            >
+                                Add New Job
+                            </button>
+                        )}
+                    </div>
+
+                    {jobs.length > 0 ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {jobs.map(job => (
+                                <JobCard key={job.id} job={job} onSelect={onJobSelect} />
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-center text-gray-600 text-lg py-10">No jobs in this category yet.</p>
+                    )}
+
+                    {showCreateJobModal && (
+                        <CreateJobModal
+                            onClose={() => setShowCreateJobModal(false)}
+                            projectId={project.id}
+                            categoryId={category.id}
+                            userId={userId}
+                            userName={userName}
+                        />
+                    )}
+                </div>
+            );
+        };
+
+        // --- Job Card Component ---
+        const JobCard = ({ job, onSelect }) => {
+            let statusColorClass = 'bg-gray-200 text-gray-800';
+            switch (job.status) {
+                case 'To Do':
+                    statusColorClass = 'bg-gray-200 text-gray-800';
+                    break;
+                case 'In Progress':
+                    statusColorClass = 'bg-blue-200 text-blue-800';
+                    break;
+                case 'Review':
+                    statusColorClass = 'bg-yellow-200 text-yellow-800';
+                    break;
+                case 'Done':
+                    statusColorClass = 'bg-green-200 text-green-800';
+                    break;
+                default:
+                    statusColorClass = 'bg-gray-200 text-gray-800';
+            }
+            return (
+                <div
+                    className="bg-white rounded-lg shadow-md p-5 transform transition duration-300 hover:scale-105 cursor-pointer"
+                    onClick={() => onSelect(job)}
+                >
+                    <div className="flex justify-between items-start mb-3">
+                        <h4 className="text-lg font-bold text-gray-800">{job.jobName}</h4>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusColorClass}`}>
+                            {job.status}
+                        </span>
+                    </div>
+                    <p className="text-gray-600 text-sm mb-1"><span className="font-semibold">Code:</span> {job.jobCode}</p>
+                    <p className="text-gray-600 text-sm mb-1"><span className="font-semibold">Assigned:</span> {(job.assignedTo || []).join(', ')}</p>
+                    <p className="text-gray-600 text-sm">
+                        <span className="font-semibold">Due:</span> {formatFirestoreTimestamp(job.dueDate)}
+                    </p>
+                </div>
+            );
+        };
+
+
+        // --- Create Job Modal Component ---
+        const CreateJobModal = ({ onClose, projectId, categoryId, userId, userName }) => {
+            const { db, appId, serverTimestamp } = useContext(FirebaseContext);
+            const [jobName, setJobName] = useState('');
+            const [jobCode, setJobCode] = useState('');
+            const [assignedTo, setAssignedTo] = useState(''); // Comma separated emails
+            const [brief, setBrief] = useState('');
+            const [dueDate, setDueDate] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const mounted = useRef(true); // Ref to track if the component is mounted
+
+            // Set mounted.current to false when component unmounts
+            useEffect(() => {
+                return () => {
+                    mounted.current = false;
+                };
+            }, []);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (!jobName || !jobCode || !brief || !dueDate) {
+                    setError("All required fields must be filled.");
+                    return;
+                }
+                setLoading(true);
+                setError('');
+
+                const assignedToList = assignedTo.split(',').map(email => email.trim()).filter(email => email !== '');
+
+                try {
+                    // Use the exposed firestoreAddDoc and firestoreCollection functions
+                    await firestoreAddDoc(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${projectId}/categories/${categoryId}/jobs`), {
+                        jobName,
+                        jobCode,
+                        assignedTo: assignedToList,
+                        brief,
+                        status: "To Do", // Default status for new jobs
+                        startDate: serverTimestamp(), // Assuming start date is creation time
+                        dueDate: new Date(dueDate),
+                        lastStatusUpdate: serverTimestamp(),
+                        createdAt: serverTimestamp(),
+                        createdBy: userId
+                    });
+                    if (mounted.current) {
+                        onClose();
+                    }
+                } catch (err) {
+                    console.error("Error creating job:", err);
+                    if (mounted.current) {
+                        setError("Failed to create job. Please try again.");
+                    }
+                } finally {
+                    if (mounted.current) {
+                        setLoading(false);
+                    }
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                        <h3 className="text-2xl font-bold text-gray-900 mb-6 text-center">Create New Job</h3>
+                        <form onSubmit={handleSubmit}>
+                            <div className="mb-4">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="jobName">
+                                    Job Name
+                                </label>
+                                <input
+                                    type="text"
+                                    id="jobName"
+                                    className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline focus:ring-2 focus:ring-blue-500"
+                                    value={jobName}
+                                    onChange={(e) => setJobName(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            <div className="mb-4">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="jobCode">
+                                    Job Code
+                                </label>
+                                <input
+                                    type="text"
+                                    id="jobCode"
+                                    className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline focus:ring-2 focus:ring-blue-500"
+                                    value={jobCode}
+                                    onChange={(e) => setJobCode(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            <div className="mb-4">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="assignedTo">
+                                    Assigned To (comma-separated emails)
+                                </label>
+                                <input
+                                    type="text"
+                                    id="assignedTo"
+                                    className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline focus:ring-2 focus:ring-blue-500"
+                                    value={assignedTo}
+                                    onChange={(e) => setAssignedTo(e.target.value)}
+                                />
+                            </div>
+                            <div className="mb-4">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="brief">
+                                    Brief
+                                </label>
+                                <textarea
+                                    id="brief"
+                                    rows="4"
+                                    className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline focus:ring-2 focus:ring-blue-500"
+                                    value={brief}
+                                    onChange={(e) => setBrief(e.target.value)}
+                                    required
+                                ></textarea>
+                            </div>
+                            <div className="mb-6">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="dueDate">
+                                    Due Date
+                                </label>
+                                <input
+                                    type="date"
+                                    id="dueDate"
+                                    className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline focus:ring-2 focus:ring-blue-500"
+                                    value={dueDate}
+                                    onChange={(e) => setDueDate(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            {error && <p className="text-red-500 text-xs italic mb-4 text-center">{error}</p>}
+                            <div className="flex items-center justify-between">
+                                <button
+                                    type="submit"
+                                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-300 ease-in-out transform hover:scale-105 disabled:opacity-50"
+                                    disabled={loading}
+                                >
+                                    {loading ? 'Creating...' : 'Create Job'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={onClose}
+                                    className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-300 ease-in-out transform hover:scale-105"
+                                    disabled={loading}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Job Detail View Component ---
+        const JobDetailView = ({ project, category, job, onBack, isAdmin, userId, userName, authReady, currentUser }) => {
+            const { db, appId, serverTimestamp } = useContext(FirebaseContext);
+            const [comments, setComments] = useState([]);
+            const [loadingComments, setLoadingComments] = useState(true);
+            const [newComment, setNewComment] = useState('');
+            const [updatingStatus, setUpdatingStatus] = useState(false);
+            const [statusError, setStatusError] = useState('');
+            const mounted = useRef(true); // Ref to track if the component is mounted
+
+            // Set mounted.current to false when component unmounts
+            useEffect(() => {
+                return () => {
+                    mounted.current = false;
+                };
+            }, []);
+
+            useEffect(() => {
+                if (!authReady || !currentUser || !db || !appId || !project?.id || !category?.id || !job?.id) {
+                    console.log("JobDetailView: Not ready to fetch comments. authReady:", authReady, "currentUser:", currentUser, "db:", db, "appId:", appId, "projectId:", project?.id, "categoryId:", category?.id, "jobId:", job?.id);
+                    setLoadingComments(true);
+                    return;
+                }
+
+                console.log("JobDetailView: Fetching comments for job:", job.id);
+                const commentsRef = firestoreCollection(db, `artifacts/${appId}/public/data/projects/${project.id}/categories/${category.id}/jobs/${job.id}/comments`);
+                const q = firestoreQuery(commentsRef, firestoreOrderBy('createdAt', 'desc'));
+
+                const unsubscribe = firestoreOnSnapshot(q, (snapshot) => {
+                    if (mounted.current) { // Only update state if component is still mounted
+                        const commentsData = snapshot.docs.map(doc => ({
+                            id: doc.id,
+                            ...doc.data()
+                        }));
+                        setComments(commentsData);
+                        setLoadingComments(false);
+                        console.log(`Comments for job ${job.jobName} loaded:`, commentsData);
+                    }
+                }, (error) => {
+                    console.error(`Error fetching comments for job ${job.jobName}:`, error);
+                    if (mounted.current) {
+                        setLoadingComments(false);
+                    }
+                });
+
+                return () => unsubscribe();
+            }, [db, appId, project?.id, category?.id, job?.id, authReady, currentUser]);
+
+            const handleAddComment = async (e) => {
+                e.preventDefault();
+                if (!newComment.trim()) return;
+
+                try {
+                    await firestoreAddDoc(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${project.id}/categories/${category.id}/jobs/${job.id}/comments`), {
+                        commentText: newComment,
+                        userId: userId,
+                        userName: userName,
+                        createdAt: serverTimestamp()
+                    });
+                    if (mounted.current) {
+                        setNewComment('');
+                    }
+                } catch (error) {
+                    console.error("Error adding comment:", error);
+                    // Optionally show a user-friendly error message
+                }
+            };
+
+            const handleStatusChange = async (e) => {
+                const newStatus = e.target.value;
+                setUpdatingStatus(true);
+                setStatusError('');
+
+                try {
+                    const jobRef = firestoreDoc(db, `artifacts/${appId}/public/data/projects/${project.id}/categories/${category.id}/jobs/${job.id}`);
+                    await firestoreUpdateDoc(jobRef, {
+                        status: newStatus,
+                        lastStatusUpdate: serverTimestamp()
+                    });
+
+                    // Force refresh of the job counts for the parent project (indirect update)
+                    const projectDocRef = firestoreDoc(db, `artifacts/${appId}/public/data/projects/${project.id}`);
+                    // No need to get the doc, just update the timestamp to trigger a refresh
+                    await firestoreUpdateDoc(projectDocRef, {
+                        lastStatusUpdate: serverTimestamp()
+                    });
+
+                } catch (error) {
+                    console.error("Error updating job status:", error);
+                    if (mounted.current) {
+                        setStatusError("Failed to update status. Please try again.");
+                    }
+                } finally {
+                    if (mounted.current) {
+                        setUpdatingStatus(false);
+                    }
+                }
+            };
+
+            const now = new Date();
+            const dueDate = job.dueDate ? (job.dueDate.toDate ? job.dueDate.toDate() : new Date(job.dueDate)) : null;
+            const lastStatusUpdate = job.lastStatusUpdate ? (job.lastStatusUpdate.toDate ? job.lastStatusUpdate.toDate() : new Date(job.lastStatusUpdate)) : null;
+
+            let daysDueText = 'N/A';
+            let deadlineColorClass = 'text-gray-700';
+            if (dueDate) {
+                const diffTime = dueDate.getTime() - now.getTime();
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                if (diffDays > 0) {
+                    daysDueText = `${diffDays} days left`;
+                    if (diffDays <= 7) deadlineColorClass = 'text-orange-600';
+                } else if (diffDays < 0) {
+                    daysDueText = `${Math.abs(diffDays)} days overdue`;
+                    deadlineColorClass = 'text-red-600 font-bold';
+                } else {
+                    daysDueText = 'Due today';
+                    deadlineColorClass = 'text-orange-600 font-bold';
+                }
+            }
+
+            let daysSinceUpdateText = 'N/A';
+            if (lastStatusUpdate) {
+                const diffDays = calculateDaysDiff(lastStatusUpdate, now);
+                daysSinceUpdateText = `${diffDays} days ago`;
+            }
+
+            return (
+                <div className="container mx-auto p-4 md:p-8">
+                    <button
+                        onClick={onBack}
+                        className="mb-6 flex items-center text-blue-600 hover:text-blue-800 font-semibold transition duration-200"
+                    >
+                        <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
+                        Back to {category.name} Jobs
+                    </button>
+
+                    <h2 className="text-3xl font-extrabold text-gray-900 mb-6">{job.jobName}</h2>
+
+                    <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-gray-700 mb-6">
+                            <p><span className="font-semibold">Job Code:</span> {job.jobCode}</p>
+                            <p><span className="font-semibold">Assigned To:</span> {(job.assignedTo || []).join(', ')}</p>
+                            <p><span className="font-semibold">Start Date:</span> {formatFirestoreTimestamp(job.startDate)}</p>
+                            <p><span className="font-semibold">Due Date:</span> {formatFirestoreTimestamp(job.dueDate)} (<span className={deadlineColorClass}>{daysDueText}</span>)</p>
+                            <p><span className="font-semibold">Last Status Update:</span> {daysSinceUpdateText}</p>
+                        </div>
+                        <div className="mb-6">
+                            <h4 className="font-semibold text-gray-800 mb-2">Brief:</h4>
+                            <p className="bg-gray-50 p-4 rounded-lg text-gray-700 leading-relaxed">{job.brief}</p>
+                        </div>
+
+                        <div className="flex items-center gap-4 mb-6">
+                            <label className="block text-gray-700 text-sm font-bold" htmlFor="jobStatus">
+                                Status:
+                            </label>
+                            {isAdmin ? (
+                                <select
+                                    id="jobStatus"
+                                    className="p-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    value={job.status}
+                                    onChange={handleStatusChange}
+                                    disabled={updatingStatus}
+                                >
+                                    <option value="To Do">To Do</option>
+                                    <option value="In Progress">In Progress</option>
+                                    <option value="Review">Review</option>
+                                    <option value="Done">Done</option>
+                                </select>
+                            ) : (
+                                <span className="p-2 px-4 rounded-lg bg-gray-200 text-gray-800 font-semibold">{job.status}</span>
+                            )}
+                            {updatingStatus && <span className="text-sm text-gray-500">Updating...</span>}
+                            {statusError && <span className="text-sm text-red-500">{statusError}</span>}
+                        </div>
+                    </div>
+
+                    {/* Comments Section */}
+                    <div className="bg-white rounded-lg shadow-md p-6">
+                        <h3 className="text-2xl font-bold text-gray-900 mb-6">Comments</h3>
+                        <form onSubmit={handleAddComment} className="mb-6">
+                            <textarea
+                                className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                rows="3"
+                                placeholder="Add a comment..."
+                                value={newComment}
+                                onChange={(e) => setNewComment(e.target.value)}
+                            ></textarea>
+                            <button
+                                type="submit"
+                                className="mt-3 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow transition duration-300 ease-in-out transform hover:scale-105"
+                            >
+                                Post Comment
+                            </button>
+                        </form>
+
+                        {loadingComments ? (
+                            <div className="flex items-center justify-center py-8">
+                                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                Loading comments...
+                            </div>
+                        ) : (
+                            comments.length > 0 ? (
+                                <div className="space-y-4">
+                                    {comments.map(comment => (
+                                        <div key={comment.id} className="bg-gray-50 p-4 rounded-lg shadow-sm border border-gray-200">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <span className="font-semibold text-gray-800">{comment.userName || 'Anonymous'}</span>
+                                                <span className="text-xs text-gray-500">{formatFirestoreTimestamp(comment.createdAt)}</span>
+                                            </div>
+                                            <p className="text-gray-700 leading-snug">{comment.commentText}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="text-center text-gray-600 py-4">No comments yet. Be the first to add one!</p>
+                            )
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
