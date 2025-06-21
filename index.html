@@ -10,60 +10,61 @@
     <!-- Lucide Icons CDN -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Firebase SDKs -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        // Corrected import: added missing Firestore functions
-        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, orderBy, serverTimestamp, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    // Corrected import: added missing Firestore functions
+    import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, orderBy, serverTimestamp, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Firebase configuration and initialization
-         const firebaseConfig = JSON.parse(typeof NEXT_PUBLIC_FIREBASE_CONFIG !== 'undefined' ? NEXT_PUBLIC_FIREBASE_CONFIG : '{}');
-         const appId = typeof NEXT_PUBLIC_APP_ID !== 'undefined' ? NEXT_PUBLIC_APP_ID : 'default-app-id';
+    // Firebase configuration and initialization (HARDCODED FOR VERIFICATION)
+    // NOTE: For production, these would ideally be injected securely as environment variables.
+    const firebaseConfig = {"apiKey": "AIzaSyDX-TAmz7Pbkt3G3WHzwiemXf34435tfHI","authDomain":"projectmp-cdc19.firebaseapp.com","projectId":"projectmp-cdc19","storageBucket":"projectmp-cdc19.firebasestorage.app","messagingSenderId": "563698187934","appId": "1:563698187934:web:205e6ccaeeae43a595858f","measurementId": "G-HB0ETS7PXF"};
+    const appId = "1:563698187934:web:205e6ccaeeae43a595858f";
 
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        const auth = getAuth(app);
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const auth = getAuth(app);
 
-        // Store these globally or pass them down via context/props in React
-        window.firebaseApp = app;
-        window.firestoreDb = db;
-        window.firebaseAuth = auth;
-        window.appId = appId;
-        window.serverTimestamp = serverTimestamp; // Expose for use in React components
-        // Expose all necessary Firestore functions to the window object for React components
-        window.firestoreCollection = collection;
-        window.firestoreDoc = doc;
-        window.firestoreGetDoc = getDoc;
-        window.firestoreAddDoc = addDoc;
-        window.firestoreSetDoc = setDoc;
-        window.firestoreUpdateDoc = updateDoc;
-        window.firestoreDeleteDoc = deleteDoc;
-        window.firestoreOnSnapshot = onSnapshot;
-        window.firestoreQuery = query;
-        window.firestoreWhere = where;
-        window.firestoreOrderBy = orderBy;
-        window.firestoreGetDocs = getDocs;
+    // Store these globally or pass them down via context/props in React
+    window.firebaseApp = app;
+    window.firestoreDb = db;
+    window.firebaseAuth = auth;
+    window.appId = appId;
+    window.serverTimestamp = serverTimestamp; // Expose for use in React components
+    // Expose all necessary Firestore functions to the window object for React components
+    window.firestoreCollection = collection;
+    window.firestoreDoc = doc;
+    window.firestoreGetDoc = getDoc;
+    window.firestoreAddDoc = addDoc;
+    window.firestoreSetDoc = setDoc;
+    window.firestoreUpdateDoc = updateDoc;
+    window.firestoreDeleteDoc = deleteDoc;
+    window.firestoreOnSnapshot = onSnapshot;
+    window.firestoreQuery = query;
+    window.firestoreWhere = where;
+    window.firestoreOrderBy = orderBy;
+    window.firestoreGetDocs = getDocs;
 
-
-        // Attempt to sign in
-        onAuthStateChanged(auth, async (user) => {
-            if (!user) {
-                try {
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                        console.log("Signed in with custom token!");
-                    } else {
-                        await signInAnonymously(auth);
-                        console.log("Signed in anonymously!");
-                    }
-                } catch (error) {
-                    console.error("Error signing in:", error);
+    // Attempt to sign in
+    onAuthStateChanged(auth, async (user) => {
+        if (!user) {
+            try {
+                // __initial_auth_token is provided by Canvas and is meant to be used when available
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                    console.log("Signed in with custom token!");
+                } else {
+                    await signInAnonymously(auth);
+                    console.log("Signed in anonymously!");
                 }
-            } else {
-                console.log("User already signed in:", user.uid);
+            } catch (error) {
+                console.error("Error signing in:", error);
             }
-        });
-    </script>
+        } else {
+            console.log("User already signed in:", user.uid);
+        }
+    });
+</script>
     <!-- React and ReactDOM CDNs -->
     <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
