@@ -65,7 +65,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useContext, createContext, useRef } = React;
+        const { useState, useEffect, useContext, createContext, useRef, useCallback } = React; // Added useCallback
         const {
             firestoreDb,
             firebaseAuth,
@@ -462,6 +462,7 @@
                             // Update project job counts after adding all jobs
                             // This initial dummy data update might be redundant now with the real-time update in CategoryJobsView useEffect
                             // but leaving it for initial population guarantee.
+                            // The dummy data `updateProjectJobCounts` is called with projectDocRef.id, which is correct
                             await updateProjectJobCounts(projectDocRef.id);
                         }
                     }
@@ -470,7 +471,7 @@
                 const updateProjectJobCounts = async (currentProjectId) => {
                     if (!firestoreDb || !appId) return;
                     const projectRef = firestoreDoc(firestoreDb, `artifacts/${appId}/public/data/projects/${currentProjectId}`);
-                    console.log(`Starting to update counts for project: ${currentProjectId}`);
+                    console.log(`[updateProjectJobCounts] Starting for project: ${currentProjectId}`);
                     let totalOpen = 0;
                     let totalClosed = 0;
                     let totalOverdue = 0;
@@ -480,10 +481,10 @@
 
                     try {
                         const categoriesSnap = await firestoreGetDocs(firestoreCollection(firestoreDb, `artifacts/${appId}/public/data/projects/${currentProjectId}/categories`));
-                        console.log(`Found ${categoriesSnap.docs.length} categories for project ${currentProjectId}.`);
+                        console.log(`[updateProjectJobCounts] Found ${categoriesSnap.docs.length} categories for project ${currentProjectId}.`);
                         for (const catDoc of categoriesSnap.docs) {
                             const jobsSnap = await firestoreGetDocs(firestoreCollection(firestoreDb, `artifacts/${appId}/public/data/projects/${currentProjectId}/categories/${catDoc.id}/jobs`));
-                            console.log(`  Category ${catDoc.id} has ${jobsSnap.docs.length} jobs.`);
+                            console.log(`[updateProjectJobCounts]   Category ${catDoc.id} has ${jobsSnap.docs.length} jobs.`);
                             jobsSnap.forEach(jobDoc => {
                                 const job = jobDoc.data();
                                 totalJobs++;
@@ -651,7 +652,7 @@
                     <div className="min-h-screen bg-gray-100">
                         {/* Header for navigation and user info */}
                         <header className="bg-white shadow-sm p-4 flex items-center justify-between">
-                            <h1 className="text-xl font-bold text-gray-800">Yati Project Manager V1.0</h1> {/* Instruction #1 */}
+                            <h1 className="text-xl font-bold text-gray-800">Yati Project Manager V1.0</h1> <!-- Instruction #1 -->
                             {user && (
                                 <div className="text-sm text-gray-600 flex items-center">
                                     Logged in as: <span className="font-semibold ml-1">{user.displayName || user.email || user.uid}</span>
@@ -988,7 +989,7 @@
                             <option value="Completed">Completed</option>
                             <option value="Planning">Planning</option>
                             <option value="Archived">Archived</option>
-                            {/* Instruction #12 */}
+                            <!-- Instruction #12 -->
                             <option value="Pending">Pending</option>
                             <option value="In-queue">In-queue</option>
                             <option value="In Progress">In Progress</option>
@@ -997,14 +998,14 @@
                         </select>
                     </div>
 
-                    {/* Instruction #11: Critical Jobs List */}
+                    <!-- Instruction #11: Critical Jobs List -->
                     {criticalJobs.length > 0 && (
                         <div className="mb-8 p-6 bg-yellow-50 border border-yellow-200 rounded-lg shadow-inner">
                             <h3 className="text-xl font-bold text-yellow-800 mb-4 flex items-center">
                                 <i className="fas fa-exclamation-triangle mr-2"></i> Critical Jobs Needing Attention
                             </h3>
                             <ul className="list-disc list-inside space-y-2">
-                                {criticalJobs.slice(0, 5).map(job => ( // Show top 5 critical jobs
+                                {criticalJobs.slice(0, 5).map(job => ( <!-- Show top 5 critical jobs -->
                                     <li key={job.id} className="text-gray-700 text-sm">
                                         <span className="font-semibold">{job.projectName} ({job.categoryName}):</span> {job.jobName} (Due: {formatFirestoreTimestamp(job.dueDate)}, Status: {job.status})
                                     </li>
@@ -1024,7 +1025,7 @@
                                     key={project.id}
                                     project={project}
                                     onSelect={onProjectSelect}
-                                    onDelete={() => { // Instruction #2
+                                    onDelete={() => { <!-- Instruction #2 -->
                                         setProjectToDelete(project);
                                         setShowDeleteConfirmModal(true);
                                     }}
@@ -1044,7 +1045,7 @@
                         />
                     )}
 
-                    {/* Instruction #2: Delete Confirmation Modal */}
+                    <!-- Instruction #2: Delete Confirmation Modal -->
                     {showDeleteConfirmModal && (
                         <ConfirmModal
                             message={`Are you sure you want to delete project "${projectToDelete?.projectName}"? This will also delete all associated categories, jobs, and comments.`}
@@ -1061,7 +1062,7 @@
             );
         };
 
-        // --- KPI Card Component (Instruction #7) ---
+        <!-- --- KPI Card Component (Instruction #7) --- -->
         const KPICard = ({ title, value, icon, color }) => {
             const colorClasses = {
                 blue: "bg-blue-100 text-blue-800",
@@ -1083,13 +1084,13 @@
             );
         };
 
-        // --- Project Card Component ---
+        <!-- --- Project Card Component --- -->
         const ProjectCard = ({ project, onSelect, onDelete, isAdmin }) => {
             const now = new Date();
             const deadlineDate = project.deadline ? (project.deadline.toDate ? project.deadline.toDate() : new Date(project.deadline)) : null;
 
-            let iconClass = ''; // Instruction #9
-            let iconColor = ''; // Instruction #9
+            let iconClass = ''; <!-- Instruction #9 -->
+            let iconColor = ''; <!-- Instruction #9 -->
 
             if (deadlineDate) {
                 const diffTime = deadlineDate.getTime() - now.getTime();
@@ -1098,31 +1099,31 @@
                     iconClass = 'fas fa-check-circle';
                     iconColor = 'text-green-500';
                 } else if (diffDays < 0) {
-                    iconClass = 'fas fa-times-circle'; // Overdue
+                    iconClass = 'fas fa-times-circle'; <!-- Overdue -->
                     iconColor = 'text-red-500';
                 } else if (diffDays <= 7) {
-                    iconClass = 'fas fa-exclamation-circle'; // Critical (due soon)
+                    iconClass = 'fas fa-exclamation-circle'; <!-- Critical (due soon) -->
                     iconColor = 'text-orange-500';
                 } else {
-                    iconClass = 'fas fa-circle'; // Good
+                    iconClass = 'fas fa-circle'; <!-- Good -->
                     iconColor = 'text-green-500';
                 }
             } else {
-                iconClass = 'fas fa-circle'; // Default if no deadline
+                iconClass = 'fas fa-circle'; <!-- Default if no deadline -->
                 iconColor = 'text-gray-400';
             }
 
             return (
                 <div className="relative bg-white rounded-lg shadow-md p-6 mb-4 transform transition duration-300 hover:scale-105 flex flex-col justify-between">
-                    {/* Instruction #9: Deadline Icon */}
+                    <!-- Instruction #9: Deadline Icon -->
                     <div className={`absolute top-3 left-3 text-xl ${iconColor}`}>
                         <i className={iconClass}></i>
                     </div>
 
                     <div className="cursor-pointer" onClick={() => onSelect(project)}>
-                        <div className="flex justify-between items-start mb-3 pl-8"> {/* Adjusted padding for icon */}
+                        <div className="flex justify-between items-start mb-3 pl-8"> <!-- Adjusted padding for icon -->
                             <h3 className="text-xl font-bold text-gray-800">{project.projectName}</h3>
-                            <span className={`px-3 py-1 rounded-full text-sm font-semibold bg-gray-200 text-gray-800`}> {/* Status is now pulled from project.status */}
+                            <span className={`px-3 py-1 rounded-full text-sm font-semibold bg-gray-200 text-gray-800`}> <!-- Status is now pulled from project.status -->
                                 {project.status}
                             </span>
                         </div>
@@ -1130,7 +1131,7 @@
                             <span className="font-semibold">Code:</span> {project.projectCode}
                         </div>
                         <div className="text-gray-600 mb-1">
-                            <span className="font-semibold">Admin:</span> {project.projectAdmin} {/* Instruction #10 */}
+                            <span className="font-semibold">Admin:</span> {project.projectAdmin} <!-- Instruction #10 -->
                         </div>
                         <div className="text-gray-600 text-sm mb-1">
                             <span className="font-semibold">Deadline:</span> {formatFirestoreTimestamp(project.deadline)}
@@ -1152,7 +1153,7 @@
                             </div>
                         </div>
                     </div>
-                    {/* Instruction #8: Open, Closed, Overdue Jobs on card */}
+                    <!-- Instruction #8: Open, Closed, Overdue Jobs on card -->
                     <div className="mt-4 flex justify-between text-sm text-gray-500">
                         <div className="flex items-center">
                             <i className="fas fa-tasks mr-1 text-indigo-500"></i>
@@ -1167,7 +1168,7 @@
                             Overdue: <span className="font-semibold ml-1">{project.overdueJobsCount || 0}</span>
                         </div>
                     </div>
-                    {isAdmin && ( // Instruction #2: Delete project button
+                    {isAdmin && ( <!-- Instruction #2: Delete project button -->
                         <button
                             onClick={(e) => { e.stopPropagation(); onDelete(); }}
                             className="absolute top-3 right-3 text-red-500 hover:text-red-700 transition duration-200"
@@ -1180,12 +1181,12 @@
             );
         };
 
-        // --- Create Project Modal Component ---
+        <!-- --- Create Project Modal Component --- -->
         const CreateProjectModal = ({ onClose, userId, userName }) => {
             const { db, appId, serverTimestamp } = useContext(FirebaseContext);
             const [projectName, setProjectName] = useState('');
             const [projectCode, setProjectCode] = useState('');
-            const [projectAdminName, setProjectAdminName] = useState(userName || ''); // Instruction #10
+            const [projectAdminName, setProjectAdminName] = useState(userName || ''); <!-- Instruction #10 -->
             const [deadline, setDeadline] = useState('');
             const [loading, setLoading] = useState(false);
             const [error, setError] = useState('');
@@ -1199,7 +1200,7 @@
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
-                if (!projectName || !projectCode || !projectAdminName || !deadline) { // Instruction #10
+                if (!projectName || !projectCode || !projectAdminName || !deadline) { <!-- Instruction #10 -->
                     setError("All fields are required.");
                     return;
                 }
@@ -1210,7 +1211,7 @@
                     await firestoreAddDoc(firestoreCollection(db, `artifacts/${appId}/public/data/projects`), {
                         projectName,
                         projectCode,
-                        projectAdmin: projectAdminName, // Instruction #10
+                        projectAdmin: projectAdminName, <!-- Instruction #10 -->
                         status: "Planning",
                         progress: 0,
                         deadline: new Date(deadline),
@@ -1271,7 +1272,7 @@
                             </div>
                             <div className="mb-4">
                                 <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="projectAdmin">
-                                    Project Admin Name {/* Instruction #10 */}
+                                    Project Admin Name <!-- Instruction #10 -->
                                 </label>
                                 <input
                                     type="text"
@@ -1319,7 +1320,7 @@
             );
         };
 
-            // --- Confirmation Modal Component (Instruction #2) ---
+            <!-- --- Confirmation Modal Component (Instruction #2) --- -->
             const ConfirmModal = ({ message, onConfirm, onCancel, confirmText, cancelText }) => {
                 return (
                     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -1336,7 +1337,7 @@
                                     onClick={onCancel}
                                     className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105"
                                 >
-                                    {cancelText}
+                                    Cancel
                                 </button>
                             </div>
                         </div>
@@ -1345,11 +1346,11 @@
             };
 
 
-        // --- Project Detail View Component ---
+        <!-- --- Project Detail View Component --- -->
         const ProjectDetailView = ({ project, onBack, onCategorySelect, isAdmin, isAdminOwner, userId, userName, authReady, currentUser }) => {
             const { db, appId } = useContext(FirebaseContext);
             const [categories, setCategories] = useState([]);
-            const [criticalProjectJobs, setCriticalProjectJobs] = useState([]); // Instruction #14
+            const [criticalProjectJobs, setCriticalProjectJobs] = useState([]); <!-- Instruction #14 -->
             const [loadingCategories, setLoadingCategories] = useState(true);
             const [showCreateCategoryModal, setShowCreateCategoryModal] = useState(false);
 
@@ -1368,7 +1369,7 @@
                     setCategories(categoriesData);
                     setLoadingCategories(false);
 
-                    // Fetch all jobs for this project to determine critical jobs (Instruction #14)
+                    <!-- Fetch all jobs for this project to determine critical jobs (Instruction #14) -->
                     const allJobsInProject = [];
                     for (const category of categoriesData) {
                         const jobsSnap = await firestoreGetDocs(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${project.id}/categories/${category.id}/jobs`));
@@ -1387,7 +1388,7 @@
                             }
                         });
                     }
-                     // Sort critical jobs by urgency: overdue first, then near overdue, then stale
+                     <!-- Sort critical jobs by urgency: overdue first, then near overdue, then stale -->
                     allJobsInProject.sort((a, b) => {
                         const now = new Date();
                         const aDue = a.dueDate?.toDate ? a.dueDate.toDate() : new Date(a.dueDate);
@@ -1451,7 +1452,7 @@
                     <div className="bg-white rounded-lg shadow-md p-6 mb-8">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-gray-700">
                             <p><span className="font-semibold">Project Code:</span> {project.projectCode}</p>
-                            <p><span className="font-semibold">Admin:</span> {project.projectAdmin}</p> {/* Instruction #13 */}
+                            <p><span className="font-semibold">Admin:</span> {project.projectAdmin}</p> <!-- Instruction #13 -->
                             <p><span className="font-semibold">Status:</span> {project.status}</p>
                             <p><span className="font-semibold">Progress:</span> {project.progress}%</p>
                             <p><span className="font-semibold">Deadline:</span> {formatFirestoreTimestamp(project.deadline)}</p>
@@ -1463,7 +1464,7 @@
                         </div>
                     </div>
 
-                    {/* Instruction #14: Critical Jobs within Project */}
+                    <!-- Instruction #14: Critical Jobs within Project -->
                     {criticalProjectJobs.length > 0 && (
                         <div className="mb-8 p-6 bg-red-50 border border-red-200 rounded-lg shadow-inner">
                             <h3 className="text-xl font-bold text-red-800 mb-4 flex items-center">
@@ -1527,7 +1528,7 @@
             );
         };
 
-        // --- Category Card Component (Instruction #15, #16) ---
+        <!-- --- Category Card Component (Instruction #15, #16) --- -->
         const CategoryCard = ({ categoryName, description, projectId, onCategorySelect }) => {
             const { db, appId } = useContext(FirebaseContext);
             const [jobsSummary, setJobsSummary] = useState({ total: 0, open: 0, closed: 0, overdue: 0, critical: 0, assignedInitials: [] });
@@ -1576,7 +1577,7 @@
                         closed: closed,
                         overdue: overdue,
                         critical: critical,
-                        assignedInitials: Array.from(assignedSet).slice(0, 3) // Show up to 3 initials
+                        assignedInitials: Array.from(assignedSet).slice(0, 3) <!-- Show up to 3 initials -->
                     });
                     setLoadingSummary(false);
                 }, (error) => {
@@ -1587,21 +1588,21 @@
                 return () => unsubscribe();
             }, [db, appId, projectId, categoryName]);
 
-            let iconClass = ''; // Instruction #16
-            let iconColor = ''; // Instruction #16
+            let iconClass = ''; <!-- Instruction #16 -->
+            let iconColor = ''; <!-- Instruction #16 -->
 
             if (!loadingSummary) {
                 if (jobsSummary.overdue > 0) {
-                    iconClass = 'fas fa-exclamation-triangle'; // Red for overdue
+                    iconClass = 'fas fa-exclamation-triangle'; <!-- Red for overdue -->
                     iconColor = 'text-red-500';
-                } else if (jobsSummary.critical > 0) { // Includes near overdue and stale
-                    iconClass = 'fas fa-bell'; // Orange for critical
+                } else if (jobsSummary.critical > 0) { <!-- Includes near overdue and stale -->
+                    iconClass = 'fas fa-bell'; <!-- Orange for critical -->
                     iconColor = 'text-orange-500';
                 } else if (jobsSummary.open > 0) {
-                    iconClass = 'fas fa-check-circle'; // Green for good (has open jobs but none critical)
+                    iconClass = 'fas fa-check-circle'; <!-- Green for good (has open jobs but none critical) -->
                     iconColor = 'text-green-500';
                 } else {
-                    iconClass = 'fas fa-info-circle'; // Gray for no jobs
+                    iconClass = 'fas fa-info-circle'; <!-- Gray for no jobs -->
                     iconColor = 'text-gray-400';
                 }
             }
@@ -1612,7 +1613,7 @@
                     className="relative bg-blue-50 border border-blue-200 rounded-lg p-5 cursor-pointer hover:shadow-lg transition duration-200"
                     onClick={() => onCategorySelect({ id: categoryName, name: categoryName })}
                 >
-                     {/* Instruction #16: Status Icon */}
+                     <!-- Instruction #16: Status Icon -->
                     {!loadingSummary && (
                         <div className={`absolute top-3 right-3 text-xl ${iconColor}`}>
                             <i className={iconClass}></i>
@@ -1635,7 +1636,7 @@
         };
 
 
-        // --- Create Category Modal Component ---
+        <!-- --- Create Category Modal Component --- -->
         const CreateCategoryModal = ({ onClose, projectId, existingCategories, userId, userName }) => {
             const { db, appId, serverTimestamp } = useContext(FirebaseContext);
             const [categoryName, setCategoryName] = useState('');
@@ -1749,15 +1750,15 @@
         };
 
 
-        // --- Category Jobs View Component ---
+        <!-- --- Category Jobs View Component --- -->
         const CategoryJobsView = ({ project, category, onBack, onJobSelect, isAdmin, isAdminOwner, userId, userName, authReady, currentUser }) => {
             const { db, appId } = useContext(FirebaseContext);
             const [jobs, setJobs] = useState([]);
             const [loadingJobs, setLoadingJobs] = useState(true);
             const [showCreateJobModal, setShowCreateJobModal] = useState(false);
 
-            // Function to update project's job counts
-            const updateProjectJobCounts = async () => {
+            <!-- Function to update project's job counts -->
+            const updateProjectJobCounts = useCallback(async () => { <!-- Wrapped in useCallback -->
                 if (!db || !appId || !project?.id || !currentUser) {
                     console.warn("updateProjectJobCounts: Missing dependencies or user not logged in.", {db, appId, projectId: project?.id, currentUser});
                     return;
@@ -1807,13 +1808,14 @@
                         overdueJobsCount: totalOverdueJobs,
                         criticalJobsCount: totalCriticalJobs,
                         totalJobsCount: totalJobs,
-                        lastStatusUpdate: serverTimestamp() // This triggers project snapshot update
+                        lastStatusUpdate: serverTimestamp() <!-- This triggers project snapshot update -->
                     });
                     console.log(`[updateProjectJobCounts] Project ${currentProjectId} document updated successfully.`);
                 } catch (error) {
                     console.error(`[updateProjectJobCounts] Error for project ${currentProjectId}:`, error);
                 }
-            };
+            }, [db, appId, project?.id, currentUser]); <!-- Dependencies for useCallback -->
+
 
             useEffect(() => {
                 if (!authReady || !currentUser || !db || !appId || !project?.id || !category?.id) {
@@ -1829,7 +1831,7 @@
                         id: doc.id,
                         ...doc.data()
                     }));
-                    // Sort in memory for critical/urgent jobs first (Instruction #11 logic applied locally for display)
+                    <!-- Sort in memory for critical/urgent jobs first (Instruction #11 logic applied locally for display) -->
                     jobsData.sort((a, b) => {
                         const now = new Date();
                         const aDue = a.dueDate?.toDate ? a.dueDate.toDate() : new Date(a.dueDate);
@@ -1866,14 +1868,14 @@
                 return () => unsubscribe();
             }, [db, appId, project?.id, category?.id, authReady, currentUser]);
 
-            // This effect explicitly calls updateProjectJobCounts whenever the jobs list updates within this category
-            // Ensures the parent project document is always in sync with its children.
+            <!-- This effect explicitly calls updateProjectJobCounts whenever the jobs list updates within this category -->
+            <!-- Ensures the parent project document is always in sync with its children. -->
             useEffect(() => {
-                if (!loadingJobs && authReady && currentUser && jobs) { // Check 'jobs' is not null/undefined
+                if (!loadingJobs && authReady && currentUser && jobs) { <!-- Check 'jobs' is not null/undefined -->
                     console.log("[CategoryJobsView useEffect] Jobs list updated, triggering project count recalculation.");
                     updateProjectJobCounts();
                 }
-            }, [jobs, loadingJobs, authReady, currentUser, project.id]);
+            }, [jobs, loadingJobs, authReady, currentUser, project.id, updateProjectJobCounts]); <!-- Added updateProjectJobCounts to dependencies -->
 
 
             if (loadingJobs) {
@@ -1924,17 +1926,17 @@
                             categoryId={category.id}
                             userId={userId}
                             userName={userName}
-                            onJobCreated={updateProjectJobCounts} // Pass the callback
+                            onJobCreated={updateProjectJobCounts} <!-- Pass the callback -->
                         />
                     )}
                 </div>
             );
         };
 
-        // --- Job Card Component ---
+        <!-- --- Job Card Component --- -->
         const JobCard = ({ job, onSelect }) => {
-            let statusColorClass = 'bg-gray-200 text-gray-800'; // Default for 'To Do'
-            switch (job.status) { // Instruction #12 statuses
+            let statusColorClass = 'bg-gray-200 text-gray-800'; <!-- Default for 'To Do' -->
+            switch (job.status) { <!-- Instruction #12 statuses -->
                 case 'Pending':
                 case 'In-queue':
                     statusColorClass = 'bg-yellow-200 text-yellow-800';
@@ -1969,13 +1971,13 @@
                 const diffTime = dueDate.getTime() - now.getTime();
                 const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
                 if (diffDays < 0) {
-                    deadlineIcon = 'fas fa-exclamation-circle'; // Overdue
+                    deadlineIcon = 'fas fa-exclamation-circle'; <!-- Overdue -->
                     deadlineIconColor = 'text-red-500';
-                } else if (diffDays <= 2) { // Critical: due within 2 days
+                } else if (diffDays <= 2) { <!-- Critical: due within 2 days -->
                     deadlineIcon = 'fas fa-bell';
                     deadlineIconColor = 'text-orange-500';
                 } else {
-                    deadlineIcon = 'fas fa-calendar-check'; // Good
+                    deadlineIcon = 'fas fa-calendar-check'; <!-- Good -->
                     deadlineIconColor = 'text-green-500';
                 }
             }
@@ -2007,12 +2009,12 @@
         };
 
 
-        // --- Create Job Modal Component ---
-        const CreateJobModal = ({ onClose, projectId, categoryId, userId, userName, onJobCreated }) => { // Added onJobCreated prop
+        <!-- --- Create Job Modal Component --- -->
+        const CreateJobModal = ({ onClose, projectId, categoryId, userId, userName, onJobCreated }) => { <!-- Added onJobCreated prop -->
             const { db, appId, serverTimestamp } = useContext(FirebaseContext);
             const [jobName, setJobName] = useState('');
             const [jobCode, setJobCode] = useState('');
-            const [assignedTo, setAssignedTo] = useState(''); // Comma separated emails
+            const [assignedTo, setAssignedTo] = useState(''); <!-- Comma separated emails -->
             const [brief, setBrief] = useState('');
             const [dueDate, setDueDate] = useState('');
             const [loading, setLoading] = useState(false);
@@ -2042,7 +2044,7 @@
                         jobCode,
                         assignedTo: assignedToList,
                         brief,
-                        status: "Pending", // Default status for new jobs (Instruction #12)
+                        status: "Pending", <!-- Default status for new jobs (Instruction #12) -->
                         startDate: serverTimestamp(),
                         dueDate: new Date(dueDate),
                         lastStatusUpdate: serverTimestamp(),
@@ -2051,7 +2053,9 @@
                     });
                     if (mounted.current) {
                         onClose();
-                        onJobCreated(); // Call the callback to update project counts
+                        if (onJobCreated) { <!-- Check if prop exists before calling -->
+                            onJobCreated(); <!-- Call the callback to update project counts -->
+                        }
                     }
                 } catch (err) {
                     console.error("Error creating job:", err);
@@ -2158,13 +2162,13 @@
             );
         };
 
-        // --- Job Detail View Component ---
-        const JobDetailView = ({ project, category, job, onBack, isAdmin, isAdminOwner, userId, userName, authReady, currentUser, onStatusChangeSuccess }) => { // Added onStatusChangeSuccess prop
+        <!-- --- Job Detail View Component --- -->
+        const JobDetailView = ({ project, category, job, onBack, isAdmin, isAdminOwner, userId, userName, authReady, currentUser, onStatusChangeSuccess }) => { <!-- Added onStatusChangeSuccess prop -->
             const { db, appId, serverTimestamp } = useContext(FirebaseContext);
             const [comments, setComments] = useState([]);
             const [loadingComments, setLoadingComments] = useState(true);
             const [newComment, setNewComment] = useState('');
-            const [currentJobStatus, setCurrentJobStatus] = useState(job.status); // To update local state immediately
+            const [currentJobStatus, setCurrentJobStatus] = useState(job.status); <!-- To update local state immediately -->
             const [updatingStatus, setUpdatingStatus] = useState(false);
             const [statusError, setStatusError] = useState('');
             const mounted = useRef(true);
@@ -2182,7 +2186,7 @@
                 }
 
                 const commentsRef = firestoreCollection(db, `artifacts/${appId}/public/data/projects/${project.id}/categories/${category.id}/jobs/${job.id}/comments`);
-                const q = firestoreQuery(commentsRef, firestoreOrderBy('createdAt', 'asc')); // Changed to 'asc' for chronological order
+                const q = firestoreQuery(commentsRef, firestoreOrderBy('createdAt', 'asc')); <!-- Changed to 'asc' for chronological order -->
 
                 const unsubscribe = firestoreOnSnapshot(q, (snapshot) => {
                     if (mounted.current) {
@@ -2219,13 +2223,13 @@
                     }
                 } catch (error) {
                     console.error("Error adding comment:", error);
-                    // Optionally show a user-friendly error message
+                    <!-- Optionally show a user-friendly error message -->
                 }
             };
 
             const handleStatusChange = async (e) => {
                 const newStatus = e.target.value;
-                setCurrentJobStatus(newStatus); // Optimistic update
+                setCurrentJobStatus(newStatus); <!-- Optimistic update -->
                 setUpdatingStatus(true);
                 setStatusError('');
 
@@ -2236,7 +2240,7 @@
                         lastStatusUpdate: serverTimestamp()
                     });
 
-                    // Call the callback to update project counts
+                    <!-- Call the callback to update project counts -->
                     if (mounted.current && onStatusChangeSuccess) {
                          onStatusChangeSuccess();
                     }
@@ -2245,7 +2249,7 @@
                     console.error("Error updating job status:", error);
                     if (mounted.current) {
                         setStatusError("Failed to update status. Please try again.");
-                        setCurrentJobStatus(job.status); // Revert on error
+                        setCurrentJobStatus(job.status); <!-- Revert on error -->
                     }
                 } finally {
                     if (mounted.current) {
@@ -2310,7 +2314,7 @@
                             <label className="block text-gray-700 text-sm font-bold" htmlFor="jobStatus">
                                 Status:
                             </label>
-                            {(isAdmin || (currentUser && job.assignedTo && job.assignedTo.includes(currentUser.email))) ? ( // Admin or assigned user can change status
+                            {(isAdmin || (currentUser && job.assignedTo && job.assignedTo.includes(currentUser.email))) ? ( <!-- Admin or assigned user can change status -->
                                 <select
                                     id="jobStatus"
                                     className="p-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -2330,7 +2334,7 @@
                         </div>
                     </div>
 
-                    {/* Comments Section */}
+                    <!-- Comments Section -->
                     <div className="bg-white rounded-lg shadow-md p-6">
                         <h3 className="text-2xl font-bold text-gray-900 mb-6">Comments</h3>
                         <form onSubmit={handleAddComment} className="mb-6">
