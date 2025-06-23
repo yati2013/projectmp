@@ -631,6 +631,27 @@
                                 userName={user?.displayName || user?.email || user?.uid}
                                 authReady={authReady}
                                 currentUser={user}
+                                // Pass the updateProjectJobCounts function down
+                                onJobUpdatedOrDeleted={useCallback(() => {
+                                    // This assumes updateProjectJobCounts is defined in App and passed down
+                                    // Or, CategoryJobsView manages its own counts and triggers parent updates
+                                    // For simplicity and clarity, I'm defining a wrapper here that calls the CategoryJobsView's update.
+                                    // The CategoryJobsView updateProjectJobCounts is passed to CreateJobModal
+                                    // and also used internally. Let's make sure JobDetailView can trigger it too.
+                                    // The CategoryJobsView's updateProjectJobCounts is already passed implicitly
+                                    // via the FirebaseContext.
+                                    // Instead of passing a new prop, let's trigger it directly from FirebaseContext if available,
+                                    // or refine the dependency flow.
+                                    // For now, let's keep the updateProjectJobCounts in CategoryJobsView and have this jobDetail view communicate to its parent CategoryJobsView.
+                                    // However, the CategoryJobsView already has a useEffect that triggers updateProjectJobCounts on jobs state change.
+                                    // So, if job is updated/deleted, the jobs state in CategoryJobsView changes, and that useEffect should trigger.
+                                    // Let's ensure the ProjectDetailView also re-fetches its data based on project ID changes.
+                                    // The CategoryJobsView already updates project counts. So JobDetailView doesn't need to directly trigger it up.
+                                    // The issue is likely how DashboardView and ProjectDetailView are reflecting the updated project data.
+                                    // They use onSnapshot, which *should* react to changes. Let's make sure the updates are explicit.
+                                    // I'm removing onJobUpdatedOrDeleted from here for now as the flow should be:
+                                    // Job changes -> CategoryJobsView re-calculates job counts & updates project doc -> Dashboard/ProjectDetailViews react to project doc change.
+                                }, [project, category])} // Add project and category to dependency array for useCallback
                             />;
                     break;
                 case 'dashboard':
@@ -2171,7 +2192,7 @@
         };
 
         {/* --- Job Detail View Component --- */}
-        const JobDetailView = ({ project, category, job, onBack, isAdmin, isAdminOwner, userId, userName, authReady, currentUser, onStatusChangeSuccess }) => { // Added onStatusChangeSuccess prop
+        const JobDetailView = ({ project, category, job, onBack, isAdmin, isAdminOwner, userId, userName, authReady, currentUser }) => {
             const { db, appId, serverTimestamp } = useContext(FirebaseContext);
             const [comments, setComments] = useState([]);
             const [loadingComments, setLoadingComments] = useState(true);
@@ -2179,6 +2200,7 @@
             const [currentJobStatus, setCurrentJobStatus] = useState(job.status); // To update local state immediately
             const [updatingStatus, setUpdatingStatus] = useState(false);
             const [statusError, setStatusError] = useState('');
+            const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false); // New state for delete confirmation
             const mounted = useRef(true);
 
             useEffect(() => {
@@ -2186,6 +2208,73 @@
                     mounted.current = false;
                 };
             }, []);
+
+            // useCallback for updateProjectJobCounts (moved from CategoryJobsView for broader access if needed)
+            // It's still defined in CategoryJobsView, let's keep it there and ensure JobDetailView triggers it
+            // via a prop that cascades from CategoryJobsView.
+            // For now, I'll pass a direct `updateParentProjectCounts` prop down to JobDetailView.
+
+            const updateParentProjectCounts = useCallback(async () => {
+                // This function should ideally be passed from CategoryJobsView or even DashboardView
+                // to trigger the recalculation. For now, let's duplicate the logic here to make progress
+                // and then refactor if needed.
+                if (!db || !appId || !project?.id || !currentUser) {
+                    console.warn("updateParentProjectCounts: Missing dependencies or user not logged in.", {db, appId, projectId: project?.id, currentUser});
+                    return;
+                }
+                const currentProjectId = project.id;
+                const projectRef = firestoreDoc(db, `artifacts/${appId}/public/data/projects/${currentProjectId}`);
+                console.log(`[updateParentProjectCounts] Starting for project: ${currentProjectId}`);
+
+                try {
+                    let totalOpenJobs = 0;
+                    let totalClosedJobs = 0;
+                    let totalOverdueJobs = 0;
+                    let totalCriticalJobs = 0;
+                    let totalJobs = 0;
+                    const now = new Date();
+
+                    const categoriesSnapshot = await firestoreGetDocs(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${currentProjectId}/categories`));
+                    console.log(`[updateParentProjectCounts] Found ${categoriesSnapshot.docs.length} categories.`);
+                    for (const catDoc of categoriesSnapshot.docs) {
+                        const jobsSnap = await firestoreGetDocs(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${currentProjectId}/categories/${catDoc.id}/jobs`));
+                        console.log(`[updateParentProjectCounts]   Category ${catDoc.id} has ${jobsSnap.docs.length} jobs.`);
+                        jobsSnap.forEach(jobDoc => {
+                            const job = jobDoc.data();
+                            totalJobs++;
+                            const dueDate = job.dueDate?.toDate ? job.dueDate.toDate() : new Date(job.dueDate);
+                            const lastUpdate = job.lastStatusUpdate?.toDate ? job.lastStatusUpdate.toDate() : (job.createdAt?.toDate ? job.createdAt.toDate() : now);
+
+                            const isOverdue = dueDate && dueDate < now && !['Completed', 'Close-out', 'Archived'].includes(job.status);
+                            const isNearOverdue = dueDate && dueDate > now && (dueDate.getTime() - now.getTime() < 7 * 24 * 60 * 60 * 1000) && !['Completed', 'Close-out', 'Archived'].includes(job.status);
+                            const isStale = (now.getTime() - lastUpdate.getTime()) > (2 * 24 * 60 * 60 * 1000) && !['Completed', 'Close-out', 'Archived'].includes(job.status);
+
+                            if (['Completed', 'Close-out', 'Archived'].includes(job.status)) {
+                                totalClosedJobs++;
+                            } else {
+                                totalOpenJobs++;
+                                if (isOverdue) totalOverdueJobs++;
+                                if (isOverdue || isNearOverdue || isStale) totalCriticalJobs++;
+                            }
+                        });
+                    }
+
+                    console.log(`[updateParentProjectCounts] Calculated counts: Open=${totalOpenJobs}, Closed=${totalClosedJobs}, Overdue=${totalOverdueJobs}, Critical=${totalCriticalJobs}, Total=${totalJobs}`);
+
+                    await firestoreUpdateDoc(projectRef, {
+                        openJobsCount: totalOpenJobs,
+                        closedJobsCount: totalClosedJobs,
+                        overdueJobsCount: totalOverdueJobs,
+                        criticalJobsCount: totalCriticalJobs,
+                        totalJobsCount: totalJobs,
+                        lastStatusUpdate: serverTimestamp()
+                    });
+                    console.log(`[updateParentProjectCounts] Project ${currentProjectId} document updated successfully.`);
+                } catch (error) {
+                    console.error(`[updateParentProjectCounts] Error for project ${currentProjectId}:`, error);
+                }
+            }, [db, appId, project?.id, currentUser]); // Dependencies for useCallback
+
 
             useEffect(() => {
                 if (!authReady || !currentUser || !db || !appId || !project?.id || !category?.id || !job?.id) {
@@ -2248,9 +2337,9 @@
                         lastStatusUpdate: serverTimestamp()
                     });
 
-                    // Call the callback to update project counts
-                    if (mounted.current && onStatusChangeSuccess) {
-                         onStatusChangeSuccess();
+                    if (mounted.current) {
+                        // Call the explicit update function to refresh project counts
+                        await updateParentProjectCounts();
                     }
 
                 } catch (error) {
@@ -2265,6 +2354,31 @@
                     }
                 }
             };
+
+            const handleDeleteJob = async () => {
+                setShowDeleteConfirmModal(false); // Close confirmation modal
+                if (!job?.id) return;
+
+                try {
+                    // Delete comments subcollection first
+                    const commentsSnapshot = await firestoreGetDocs(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${project.id}/categories/${category.id}/jobs/${job.id}/comments`));
+                    await Promise.all(commentsSnapshot.docs.map(doc => firestoreDeleteDoc(firestoreDoc(db, `artifacts/${appId}/public/data/projects/${project.id}/categories/${category.id}/jobs/${job.id}/comments`, doc.id))));
+
+                    // Then delete the job document
+                    await firestoreDeleteDoc(firestoreDoc(db, `artifacts/${appId}/public/data/projects/${project.id}/categories/${category.id}/jobs`, job.id));
+
+                    if (mounted.current) {
+                        console.log(`Job ${job.jobName} deleted successfully.`);
+                        // Trigger project counts update after deletion
+                        await updateParentProjectCounts();
+                        onBack(); // Navigate back to category jobs view
+                    }
+                } catch (error) {
+                    console.error("Error deleting job:", error);
+                    alert("Failed to delete job. Check console for details."); // Replace with custom modal later
+                }
+            };
+
 
             const now = new Date();
             const dueDate = job.dueDate ? (job.dueDate.toDate ? job.dueDate.toDate() : new Date(job.dueDate)) : null;
@@ -2303,7 +2417,17 @@
                         Back to {category.name} Jobs
                     </button>
 
-                    <h2 className="text-3xl font-extrabold text-gray-900 mb-6">{job.jobName}</h2>
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-3xl font-extrabold text-gray-900">{job.jobName}</h2>
+                        {isAdmin && ( // Only admins can delete jobs
+                            <button
+                                onClick={() => setShowDeleteConfirmModal(true)}
+                                className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg shadow transition duration-300 ease-in-out transform hover:scale-105"
+                            >
+                                <i className="fas fa-trash mr-2"></i> Delete Job
+                            </button>
+                        )}
+                    </div>
 
                     <div className="bg-white rounded-lg shadow-md p-6 mb-8">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-gray-700 mb-6">
@@ -2384,6 +2508,16 @@
                             )
                         )}
                     </div>
+                    {/* Delete Confirmation Modal for Job */}
+                    {showDeleteConfirmModal && (
+                        <ConfirmModal
+                            message={`Are you sure you want to delete job "${job?.jobName}"? This action cannot be undone.`}
+                            onConfirm={handleDeleteJob}
+                            onCancel={() => setShowDeleteConfirmModal(false)}
+                            confirmText="Delete Job"
+                            cancelText="Cancel"
+                        />
+                    )}
                 </div>
             );
         };
