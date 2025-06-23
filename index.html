@@ -457,56 +457,68 @@
                                         comments: []
                                     });
                                 }
-                                console.log(`Added dummy jobs to category ${categoryName} in project ${project.projectName}`);
+                                console.log(`Added dummy jobs to category ${categoryName} to project ${project.projectName}`);
                             }
                             // Update project job counts after adding all jobs
+                            // This initial dummy data update might be redundant now with the real-time update in CategoryJobsView useEffect
+                            // but leaving it for initial population guarantee.
                             await updateProjectJobCounts(projectDocRef.id);
                         }
                     }
                 };
 
-                const updateProjectJobCounts = async (projectId) => {
+                const updateProjectJobCounts = async (currentProjectId) => {
                     if (!firestoreDb || !appId) return;
-                    const projectRef = firestoreDoc(firestoreDb, `artifacts/${appId}/public/data/projects/${projectId}`);
+                    const projectRef = firestoreDoc(firestoreDb, `artifacts/${appId}/public/data/projects/${currentProjectId}`);
+                    console.log(`Starting to update counts for project: ${currentProjectId}`);
                     let totalOpen = 0;
                     let totalClosed = 0;
                     let totalOverdue = 0;
                     let totalCritical = 0;
                     let totalJobs = 0;
+                    const now = new Date();
 
-                    const categoriesSnap = await firestoreGetDocs(firestoreCollection(firestoreDb, `artifacts/${appId}/public/data/projects/${projectId}/categories`));
-                    for (const catDoc of categoriesSnap.docs) {
-                        const jobsSnap = await firestoreGetDocs(firestoreCollection(firestoreDb, `artifacts/${appId}/public/data/projects/${projectId}/categories/${catDoc.id}/jobs`));
-                        jobsSnap.forEach(jobDoc => {
-                            const job = jobDoc.data();
-                            totalJobs++;
-                            const now = new Date();
-                            const dueDate = job.dueDate?.toDate ? job.dueDate.toDate() : new Date(job.dueDate);
-                            const lastUpdate = job.lastStatusUpdate?.toDate ? job.lastStatusUpdate.toDate() : (job.createdAt?.toDate ? job.createdAt.toDate() : now);
+                    try {
+                        const categoriesSnap = await firestoreGetDocs(firestoreCollection(firestoreDb, `artifacts/${appId}/public/data/projects/${currentProjectId}/categories`));
+                        console.log(`Found ${categoriesSnap.docs.length} categories for project ${currentProjectId}.`);
+                        for (const catDoc of categoriesSnap.docs) {
+                            const jobsSnap = await firestoreGetDocs(firestoreCollection(firestoreDb, `artifacts/${appId}/public/data/projects/${currentProjectId}/categories/${catDoc.id}/jobs`));
+                            console.log(`  Category ${catDoc.id} has ${jobsSnap.docs.length} jobs.`);
+                            jobsSnap.forEach(jobDoc => {
+                                const job = jobDoc.data();
+                                totalJobs++;
+                                const dueDate = job.dueDate?.toDate ? job.dueDate.toDate() : new Date(job.dueDate);
+                                const lastUpdate = job.lastStatusUpdate?.toDate ? job.lastStatusUpdate.toDate() : (job.createdAt?.toDate ? job.createdAt.toDate() : now);
 
-                            const isOverdue = dueDate && dueDate < now && !['Completed', 'Close-out', 'Archived'].includes(job.status);
-                            const isNearOverdue = dueDate && dueDate > now && (dueDate.getTime() - now.getTime() < 7 * 24 * 60 * 60 * 1000) && !['Completed', 'Close-out', 'Archived'].includes(job.status);
-                            const isStale = (now.getTime() - lastUpdate.getTime()) > (2 * 24 * 60 * 60 * 1000) && !['Completed', 'Close-out', 'Archived'].includes(job.status); // Not updated for 2 days
+                                const isOverdue = dueDate && dueDate < now && !['Completed', 'Close-out', 'Archived'].includes(job.status);
+                                const isNearOverdue = dueDate && dueDate > now && (dueDate.getTime() - now.getTime() < 7 * 24 * 60 * 60 * 1000) && !['Completed', 'Close-out', 'Archived'].includes(job.status);
+                                const isStale = (now.getTime() - lastUpdate.getTime()) > (2 * 24 * 60 * 60 * 1000) && !['Completed', 'Close-out', 'Archived'].includes(job.status); // Not updated for 2 days
 
-                            if (['Completed', 'Close-out', 'Archived'].includes(job.status)) {
-                                totalClosed++;
-                            } else {
-                                totalOpen++;
-                                if (isOverdue) totalOverdue++;
-                                // A job is critical if it's overdue, near overdue, or stale
-                                if (isOverdue || isNearOverdue || isStale) totalCritical++;
-                            }
+                                if (['Completed', 'Close-out', 'Archived'].includes(job.status)) {
+                                    totalClosed++;
+                                } else {
+                                    totalOpen++;
+                                    if (isOverdue) totalOverdue++;
+                                    // A job is critical if it's overdue, near overdue, or stale
+                                    if (isOverdue || isNearOverdue || isStale) totalCritical++;
+                                }
+                            });
+                        }
+
+                        console.log(`Recalculated counts for project ${currentProjectId}: Open=${totalOpen}, Closed=${totalClosed}, Overdue=${totalOverdue}, Critical=${totalCritical}, Total=${totalJobs}`);
+
+                        await firestoreUpdateDoc(projectRef, {
+                            openJobsCount: totalOpen,
+                            closedJobsCount: totalClosed,
+                            overdueJobsCount: totalOverdue,
+                            criticalJobsCount: totalCritical,
+                            totalJobsCount: totalJobs,
+                            lastStatusUpdate: serverTimestamp()
                         });
+                        console.log(`Finished updating project ${currentProjectId} document.`);
+                    } catch (error) {
+                        console.error(`Error in updateProjectJobCounts for project ${currentProjectId}:`, error);
                     }
-
-                    await firestoreUpdateDoc(projectRef, {
-                        openJobsCount: totalOpen,
-                        closedJobsCount: totalClosed,
-                        overdueJobsCount: totalOverdue,
-                        criticalJobsCount: totalCritical,
-                        totalJobsCount: totalJobs,
-                        lastStatusUpdate: serverTimestamp()
-                    });
                 };
 
                 if (authReady && userRole && firestoreDb && appId) { // Only add dummy data if auth is ready and user is logged in
@@ -797,6 +809,9 @@
 
 
                         // Fetch all jobs to identify critical ones (Instruction #11)
+                        // This block might cause performance issues if there are too many jobs
+                        // A more scalable solution would involve Firestore functions to aggregate
+                        // and store critical job IDs at the project or dashboard level.
                         const categoriesSnap = await firestoreGetDocs(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${project.id}/categories`));
                         for (const catDoc of categoriesSnap.docs) {
                             const jobsSnap = await firestoreGetDocs(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${project.id}/categories/${catDoc.id}/jobs`));
@@ -1741,6 +1756,65 @@
             const [loadingJobs, setLoadingJobs] = useState(true);
             const [showCreateJobModal, setShowCreateJobModal] = useState(false);
 
+            // Function to update project's job counts
+            const updateProjectJobCounts = async () => {
+                if (!db || !appId || !project?.id || !currentUser) {
+                    console.warn("updateProjectJobCounts: Missing dependencies or user not logged in.", {db, appId, projectId: project?.id, currentUser});
+                    return;
+                }
+                const currentProjectId = project.id;
+                const projectRef = firestoreDoc(db, `artifacts/${appId}/public/data/projects/${currentProjectId}`);
+                console.log(`[updateProjectJobCounts] Starting for project: ${currentProjectId}`);
+
+                try {
+                    let totalOpenJobs = 0;
+                    let totalClosedJobs = 0;
+                    let totalOverdueJobs = 0;
+                    let totalCriticalJobs = 0;
+                    let totalJobs = 0;
+                    const now = new Date();
+
+                    const categoriesSnapshot = await firestoreGetDocs(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${currentProjectId}/categories`));
+                    console.log(`[updateProjectJobCounts] Found ${categoriesSnapshot.docs.length} categories.`);
+                    for (const catDoc of categoriesSnapshot.docs) {
+                        const jobsSnapshot = await firestoreGetDocs(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${currentProjectId}/categories/${catDoc.id}/jobs`));
+                        console.log(`[updateProjectJobCounts]   Category ${catDoc.id} has ${jobsSnapshot.docs.length} jobs.`);
+                        jobsSnapshot.forEach(jobDoc => {
+                            const job = jobDoc.data();
+                            totalJobs++;
+                            const dueDate = job.dueDate?.toDate ? job.dueDate.toDate() : new Date(job.dueDate);
+                            const lastUpdate = job.lastStatusUpdate?.toDate ? job.lastStatusUpdate.toDate() : (job.createdAt?.toDate ? job.createdAt.toDate() : now);
+
+                            const isOverdue = dueDate && dueDate < now && !['Completed', 'Close-out', 'Archived'].includes(job.status);
+                            const isNearOverdue = dueDate && dueDate > now && (dueDate.getTime() - now.getTime() < 7 * 24 * 60 * 60 * 1000) && !['Completed', 'Close-out', 'Archived'].includes(job.status);
+                            const isStale = (now.getTime() - lastUpdate.getTime()) > (2 * 24 * 60 * 60 * 1000) && !['Completed', 'Close-out', 'Archived'].includes(job.status);
+
+                            if (['Completed', 'Close-out', 'Archived'].includes(job.status)) {
+                                totalClosedJobs++;
+                            } else {
+                                totalOpenJobs++;
+                                if (isOverdue) totalOverdueJobs++;
+                                if (isOverdue || isNearOverdue || isStale) totalCriticalJobs++;
+                            }
+                        });
+                    }
+
+                    console.log(`[updateProjectJobCounts] Calculated counts: Open=${totalOpenJobs}, Closed=${totalClosedJobs}, Overdue=${totalOverdueJobs}, Critical=${totalCriticalJobs}, Total=${totalJobs}`);
+
+                    await firestoreUpdateDoc(projectRef, {
+                        openJobsCount: totalOpenJobs,
+                        closedJobsCount: totalClosedJobs,
+                        overdueJobsCount: totalOverdueJobs,
+                        criticalJobsCount: totalCriticalJobs,
+                        totalJobsCount: totalJobs,
+                        lastStatusUpdate: serverTimestamp() // This triggers project snapshot update
+                    });
+                    console.log(`[updateProjectJobCounts] Project ${currentProjectId} document updated successfully.`);
+                } catch (error) {
+                    console.error(`[updateProjectJobCounts] Error for project ${currentProjectId}:`, error);
+                }
+            };
+
             useEffect(() => {
                 if (!authReady || !currentUser || !db || !appId || !project?.id || !category?.id) {
                     setLoadingJobs(true);
@@ -1792,59 +1866,12 @@
                 return () => unsubscribe();
             }, [db, appId, project?.id, category?.id, authReady, currentUser]);
 
-            // Function to update project's job counts
-            const updateProjectJobCounts = async (currentProjectId) => {
-                if (!db || !appId || !currentProjectId || !currentUser) return;
-                const projectRef = firestoreDoc(db, `artifacts/${appId}/public/data/projects/${currentProjectId}`);
-
-                try {
-                    let totalOpenJobs = 0;
-                    let totalClosedJobs = 0;
-                    let totalOverdueJobs = 0;
-                    let totalCriticalJobs = 0;
-                    let totalJobs = 0;
-                    const now = new Date();
-
-                    const categoriesSnapshot = await firestoreGetDocs(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${currentProjectId}/categories`));
-                    for (const catDoc of categoriesSnapshot.docs) {
-                        const jobsSnapshot = await firestoreGetDocs(firestoreCollection(db, `artifacts/${appId}/public/data/projects/${currentProjectId}/categories/${catDoc.id}/jobs`));
-                        jobsSnapshot.forEach(jobDoc => {
-                            const job = jobDoc.data();
-                            totalJobs++;
-                            const dueDate = job.dueDate?.toDate ? job.dueDate.toDate() : new Date(job.dueDate);
-                            const lastUpdate = job.lastStatusUpdate?.toDate ? job.lastStatusUpdate.toDate() : (job.createdAt?.toDate ? job.createdAt.toDate() : now);
-
-                            const isOverdue = dueDate && dueDate < now && !['Completed', 'Close-out', 'Archived'].includes(job.status);
-                            const isNearOverdue = dueDate && dueDate > now && (dueDate.getTime() - now.getTime() < 7 * 24 * 60 * 60 * 1000) && !['Completed', 'Close-out', 'Archived'].includes(job.status);
-                            const isStale = (now.getTime() - lastUpdate.getTime()) > (2 * 24 * 60 * 60 * 1000) && !['Completed', 'Close-out', 'Archived'].includes(job.status);
-
-                            if (['Completed', 'Close-out', 'Archived'].includes(job.status)) {
-                                totalClosedJobs++;
-                            } else {
-                                totalOpenJobs++;
-                                if (isOverdue) totalOverdueJobs++;
-                                if (isOverdue || isNearOverdue || isStale) totalCriticalJobs++;
-                            }
-                        });
-                    }
-
-                    await firestoreUpdateDoc(projectRef, {
-                        openJobsCount: totalOpenJobs,
-                        closedJobsCount: totalClosedJobs,
-                        overdueJobsCount: totalOverdueJobs,
-                        criticalJobsCount: totalCriticalJobs,
-                        totalJobsCount: totalJobs,
-                        lastStatusUpdate: serverTimestamp()
-                    });
-                } catch (error) {
-                    console.error("Error updating project job counts:", error);
-                }
-            };
-
-            // This effect specifically updates the project-level counts based on changes within this category's jobs
+            // This effect explicitly calls updateProjectJobCounts whenever the jobs list updates within this category
+            // Ensures the parent project document is always in sync with its children.
             useEffect(() => {
-                if (!loadingJobs && authReady && currentUser) {
-                    updateProjectJobCounts(project.id);
+                if (!loadingJobs && authReady && currentUser && jobs) { // Check 'jobs' is not null/undefined
+                    console.log("[CategoryJobsView useEffect] Jobs list updated, triggering project count recalculation.");
+                    updateProjectJobCounts();
                 }
             }, [jobs, loadingJobs, authReady, currentUser, project.id]);
 
@@ -1897,6 +1924,7 @@
                             categoryId={category.id}
                             userId={userId}
                             userName={userName}
+                            onJobCreated={updateProjectJobCounts} // Pass the callback
                         />
                     )}
                 </div>
@@ -1980,7 +2008,7 @@
 
 
         // --- Create Job Modal Component ---
-        const CreateJobModal = ({ onClose, projectId, categoryId, userId, userName }) => {
+        const CreateJobModal = ({ onClose, projectId, categoryId, userId, userName, onJobCreated }) => { // Added onJobCreated prop
             const { db, appId, serverTimestamp } = useContext(FirebaseContext);
             const [jobName, setJobName] = useState('');
             const [jobCode, setJobCode] = useState('');
@@ -2023,6 +2051,7 @@
                     });
                     if (mounted.current) {
                         onClose();
+                        onJobCreated(); // Call the callback to update project counts
                     }
                 } catch (err) {
                     console.error("Error creating job:", err);
@@ -2130,7 +2159,7 @@
         };
 
         // --- Job Detail View Component ---
-        const JobDetailView = ({ project, category, job, onBack, isAdmin, isAdminOwner, userId, userName, authReady, currentUser }) => {
+        const JobDetailView = ({ project, category, job, onBack, isAdmin, isAdminOwner, userId, userName, authReady, currentUser, onStatusChangeSuccess }) => { // Added onStatusChangeSuccess prop
             const { db, appId, serverTimestamp } = useContext(FirebaseContext);
             const [comments, setComments] = useState([]);
             const [loadingComments, setLoadingComments] = useState(true);
@@ -2207,11 +2236,10 @@
                         lastStatusUpdate: serverTimestamp()
                     });
 
-                    // Trigger a refresh of the project's job counts by updating its lastStatusUpdate
-                    const projectDocRef = firestoreDoc(db, `artifacts/${appId}/public/data/projects/${project.id}`);
-                    await firestoreUpdateDoc(projectDocRef, {
-                        lastStatusUpdate: serverTimestamp()
-                    });
+                    // Call the callback to update project counts
+                    if (mounted.current && onStatusChangeSuccess) {
+                         onStatusChangeSuccess();
+                    }
 
                 } catch (error) {
                     console.error("Error updating job status:", error);
